@@ -54,7 +54,9 @@ index = load_index(str(INDEX_PATH))
 sample_index = bool(index.documents) and all(str(doc.get("page", "")).startswith("Example_") for doc in index.documents.values())
 with st.sidebar:
     st.title("FEVER Lab")
-    workspace = st.radio("Workspace", ["Verify a claim", "Search evidence", "Compare retrievers"])
+    # Evidence search is the useful default when the optional verifier has not
+    # been trained yet. The verifier intentionally abstains without that model.
+    workspace = st.radio("Workspace", ["Verify a claim", "Search evidence", "Compare retrievers"], index=1)
     top_k = st.slider("Evidence sentences", 1, 20, 5)
     method = st.selectbox("Ranking method", ["BM25", "TF-IDF rerank", "Boolean"]) if workspace == "Search evidence" else "BM25"
     st.divider()
@@ -65,6 +67,18 @@ with st.sidebar:
         st.warning("Demo corpus loaded. These illustrative sentences are not the official FEVER dataset.")
 
 st.caption("Retrieval similarity measures textual relevance. It is not a truth score or calibrated confidence.")
+if sample_index:
+    st.info(
+        f"The current index contains only {len(index.documents):,} illustrative example sentences, "
+        "not the full FEVER/Wikipedia corpus. Try **Pacific Ocean** to see a sample search result. "
+        "Other topics may have no matching evidence until you build an index from the official Wikipedia sentence data."
+    )
+if workspace == "Verify a claim" and not MODEL_PATH.exists():
+    st.info(
+        "No verifier model has been trained yet, so this workspace will always return "
+        "**NOT ENOUGH INFO**. It still shows retrieved sentences when available. "
+        "Use **Search evidence** to see search results without a verdict."
+    )
 with st.form("claim_form", clear_on_submit=False):
     claim = st.text_area("Claim or search query", placeholder="Example: The Pacific Ocean is the largest ocean on Earth.", height=105)
     submitted = st.form_submit_button("Run", type="primary", use_container_width=True)
