@@ -1,0 +1,15 @@
+paths:
+  raw_data: data/raw
+  processed_data: data/processed
+  sample_data: data/sample
+  indexes: artifacts/indexes
+  models: artifacts/models
+  results: artifacts/results
+retrieval:
+  top_k: 5
+  bm25_k1: 1.5
+  bm25_b: 0.75
+preprocessing:
+  remove_stopwords: false
+  stemming: false
+seed: 42

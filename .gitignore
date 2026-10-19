@@ -1,0 +1,15 @@
+.venv/
+.DS_Store
+__pycache__/
+.pytest_cache/
+*.py[cod]
+data/raw/*
+data/processed/*
+artifacts/indexes/*
+artifacts/models/*
+artifacts/results/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!artifacts/indexes/.gitkeep
+!artifacts/models/.gitkeep
+!artifacts/results/.gitkeep
