@@ -1,5 +1,6 @@
 """Streamlit workspace for claim checking, evidence search, and retrieval comparison."""
 from pathlib import Path
+import json
 import streamlit as st
 
 from src.indexing.inverted_index import InvertedIndex
@@ -19,10 +20,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 INDEX_PATH = Path("artifacts/indexes/fever_index.json")
+INDEX_META_PATH = INDEX_PATH.with_suffix(".meta.json")
 MODEL_PATH = Path("artifacts/models/verifier.pkl")
 
 @st.cache_resource(show_spinner="Loading the knowledge index…")
-def load_index(path: str) -> InvertedIndex:
+def load_index(path: str, modified_ns: int) -> InvertedIndex:
     return InvertedIndex.load(path)
 
 @st.cache_resource(show_spinner=False)
@@ -50,7 +52,8 @@ if not INDEX_PATH.exists():
     st.code('python -m scripts.build_index data/raw/wiki-pages.jsonl --limit 100000', language="bash")
     st.stop()
 
-index = load_index(str(INDEX_PATH))
+index = load_index(str(INDEX_PATH), INDEX_PATH.stat().st_mtime_ns)
+index_metadata = json.loads(INDEX_META_PATH.read_text(encoding="utf-8")) if INDEX_META_PATH.exists() else {}
 sample_index = bool(index.documents) and all(str(doc.get("page", "")).startswith("Example_") for doc in index.documents.values())
 with st.sidebar:
     st.title("FEVER Lab")
@@ -72,6 +75,11 @@ if sample_index:
         f"The current index contains only {len(index.documents):,} illustrative example sentences, "
         "not the full FEVER/Wikipedia corpus. Try **Pacific Ocean** to see a sample search result. "
         "Other topics may have no matching evidence until you build an index from the official Wikipedia sentence data."
+    )
+elif index_metadata.get("limit") is not None:
+    st.warning(
+        f"Partial index: {len(index.documents):,} sentences were indexed from the FEVER Wikipedia corpus. "
+        "Searches for topics outside this portion may return no evidence. A complete index requires processing the full corpus."
     )
 if workspace == "Verify a claim" and not MODEL_PATH.exists():
     st.info(

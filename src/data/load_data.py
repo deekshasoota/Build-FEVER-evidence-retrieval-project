@@ -42,26 +42,29 @@ def load_claims(path: str | Path, *, strict: bool = False) -> list[dict[str, Any
     return claims
 
 def iter_wiki_sentences(path: str | Path, *, limit: int | None = None) -> Iterator[dict[str, Any]]:
-    """Stream and flatten FEVER wiki-pages JSONL without retaining all pages."""
+    """Stream FEVER wiki-pages JSONL from a file or a directory of files."""
+    path = Path(path)
+    files = sorted(path.rglob("*.jsonl")) if path.is_dir() else [path]
     count = 0
-    for page in read_jsonl(path):
-        title = page.get("title") or page.get("id")
-        raw_lines = page.get("lines", [])
-        sentence_lines = raw_lines.splitlines() if isinstance(raw_lines, str) else raw_lines
-        if not isinstance(sentence_lines, list):
-            logger.warning("Skipping page %r with invalid lines field", title)
-            continue
-        for item in sentence_lines:
-            try:
-                sid, text = item.split("\t", 1)
-                sid = int(sid)
-            except (ValueError, AttributeError):
-                logger.warning("Skipping malformed sentence on page %r", title)
+    for file_path in files:
+        for page in read_jsonl(file_path):
+            title = page.get("title") or page.get("id")
+            raw_lines = page.get("lines", [])
+            sentence_lines = raw_lines.splitlines() if isinstance(raw_lines, str) else raw_lines
+            if not isinstance(sentence_lines, list):
+                logger.warning("Skipping page %r with invalid lines field", title)
                 continue
-            yield {"id": f"{title}::{sid}", "page": title, "sentence_id": sid, "text": text}
-            count += 1
-            if limit is not None and count >= limit:
-                return
+            for item in sentence_lines:
+                try:
+                    sid, text = item.split("\t", 1)
+                    sid = int(sid)
+                except (ValueError, AttributeError):
+                    logger.warning("Skipping malformed sentence on page %r", title)
+                    continue
+                yield {"id": f"{title}::{sid}", "page": title, "sentence_id": sid, "text": text}
+                count += 1
+                if limit is not None and count >= limit:
+                    return
 
 def load_wiki_sentences(path: str | Path, *, limit: int | None = None) -> list[dict[str, Any]]:
     """Convenience list loader; use the iterator for large corpora."""
