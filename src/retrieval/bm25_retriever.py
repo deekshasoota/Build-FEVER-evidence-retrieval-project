@@ -5,6 +5,8 @@ from src.preprocessing.text_preprocessor import tokenize
 
 def search(query: str, index: InvertedIndex, top_k: int = 5, k1: float = 1.5, b: float = .75) -> list[dict]:
     if top_k < 1: return []
+    if hasattr(index, "search_bm25"):
+        return index.search_bm25(query, top_k)
     terms = tokenize(query); n = len(index.documents)
     if not terms or not n: return []
     avgdl = sum(index.lengths.values()) / n if n else 0

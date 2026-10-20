@@ -56,9 +56,10 @@ def iter_wiki_sentences(path: str | Path, *, limit: int | None = None) -> Iterat
                 continue
             for item in sentence_lines:
                 try:
-                    sid, text = item.split("\t", 1)
+                    fields = item.split("\t")
+                    sid, text = fields[0], fields[1]
                     sid = int(sid)
-                except (ValueError, AttributeError):
+                except (ValueError, AttributeError, IndexError):
                     logger.warning("Skipping malformed sentence on page %r", title)
                     continue
                 yield {"id": f"{title}::{sid}", "page": title, "sentence_id": sid, "text": text}

@@ -61,14 +61,14 @@ Put official files in `data/raw/` yourself, observing FEVER terms. The expected 
 
 ```bash
 python -m scripts.prepare_data data/raw/train.jsonl
-python -m scripts.build_index data/raw/wiki-pages --limit 100000
+python -m scripts.build_sqlite_index data/raw/wiki-pages
 python -m scripts.train_model --train data/raw/train.jsonl --index artifacts/indexes/fever_index.json
 python -m scripts.run_evaluation --dev data/raw/dev.jsonl --index artifacts/indexes/fever_index.json
 python -m scripts.run_retrieval_evaluation --claims data/raw/dev.jsonl --index artifacts/indexes/fever_index.json --top-k 5
 streamlit run app.py
 ```
 
-The build command accepts either one `.jsonl` file or a directory containing the extracted FEVER Wikipedia `.jsonl` files. Start with `--limit 100000` to build a manageable partial index; omit `--limit` only when you have enough disk space and memory for the full corpus. The index is saved to `artifacts/indexes/fever_index.json` and loaded by the app. After rebuilding, refresh the app; it detects the changed index file. For a sample-only smoke index, `python -c 'from src.data.load_data import read_jsonl; from src.indexing.inverted_index import InvertedIndex; i=InvertedIndex(); [i.add(r) for r in read_jsonl("data/sample/evidence.jsonl")]; i.save("artifacts/indexes/fever_index.json")'`.
+For the full Wikipedia corpus, use `scripts.build_sqlite_index`: it streams one or more JSONL files into a disk-backed SQLite FTS5 index, so it does not keep the complete corpus in Python memory. The app automatically prefers `artifacts/indexes/fever_index.sqlite3` when it exists. Add `--limit 100000` for a small preview; omit the limit to process every sentence in the extracted corpus. Full indexing can take a long time and use substantial disk space. The older JSON builder remains available for small experiments and the training/evaluation scripts. After building, refresh the app. For a sample-only smoke index, `python -c 'from src.data.load_data import read_jsonl; from src.indexing.inverted_index import InvertedIndex; i=InvertedIndex(); [i.add(r) for r in read_jsonl("data/sample/evidence.jsonl")]; i.save("artifacts/indexes/fever_index.json")'`.
 
 ## Training and evaluation status
 

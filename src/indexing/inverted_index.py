@@ -12,6 +12,23 @@ class InvertedIndex:
         self.postings: dict[str, dict[str, int]] = defaultdict(dict)
         self.lengths: dict[str, int] = {}
 
+    @property
+    def document_count(self) -> int:
+        return len(self.documents)
+
+    @property
+    def term_count(self) -> int:
+        return len(self.postings)
+
+    @property
+    def is_sample(self) -> bool:
+        return bool(self.documents) and all(
+            str(doc.get("page", "")).startswith("Example_") for doc in self.documents.values()
+        )
+
+    def get_documents(self, doc_ids: list[str]) -> list[dict[str, Any]]:
+        return [self.documents[doc_id] for doc_id in doc_ids if doc_id in self.documents]
+
     def add(self, record: dict[str, Any]) -> None:
         doc_id = str(record.get("id", ""))
         text = record.get("text", "")

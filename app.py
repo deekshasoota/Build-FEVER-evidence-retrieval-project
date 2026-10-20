@@ -4,6 +4,7 @@ import json
 import streamlit as st
 
 from src.indexing.inverted_index import InvertedIndex
+from src.indexing.sqlite_index import SQLiteEvidenceIndex
 from src.pipeline.fact_verifier import verify
 from src.retrieval import bm25_retriever, boolean_retriever, tfidf_retriever
 
@@ -19,12 +20,16 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-INDEX_PATH = Path("artifacts/indexes/fever_index.json")
+SQLITE_INDEX_PATH = Path("artifacts/indexes/fever_index.sqlite3")
+JSON_INDEX_PATH = Path("artifacts/indexes/fever_index.json")
+INDEX_PATH = SQLITE_INDEX_PATH if SQLITE_INDEX_PATH.exists() else JSON_INDEX_PATH
 INDEX_META_PATH = INDEX_PATH.with_suffix(".meta.json")
 MODEL_PATH = Path("artifacts/models/verifier.pkl")
 
 @st.cache_resource(show_spinner="Loading the knowledge index…")
-def load_index(path: str, modified_ns: int) -> InvertedIndex:
+def load_index(path: str, modified_ns: int) -> InvertedIndex | SQLiteEvidenceIndex:
+    if path.endswith(".sqlite3"):
+        return SQLiteEvidenceIndex(path)
     return InvertedIndex.load(path)
 
 @st.cache_resource(show_spinner=False)
@@ -41,20 +46,20 @@ def show_evidence(rows: list[dict]) -> None:
         page = row.get("page", "Unknown page")
         sentence_id = row.get("sentence_id", "?")
         score = row.get("score")
-        score_label = f"Score {score:.3f}" if isinstance(score, (int, float)) else "Boolean match"
+        score_label = f"Score {score:.6f}" if isinstance(score, (int, float)) else "Boolean match"
         with st.container(border=True):
             st.caption(f"#{row.get('rank', '–')} · {page} · sentence {sentence_id} · {score_label}")
             st.write(row.get("text", ""))
 
 st.markdown("<div class='hero'><h1>FEVER Evidence Lab</h1><p>Find source sentences first. Review the evidence before interpreting a verdict.</p></div>", unsafe_allow_html=True)
 if not INDEX_PATH.exists():
-    st.warning("The knowledge index is not built yet. Follow the data and index steps in the README, or build the included sample index for a quick UI demo.")
-    st.code('python -m scripts.build_index data/raw/wiki-pages.jsonl --limit 100000', language="bash")
+    st.warning("The knowledge index is not built yet. Use the disk-based builder on the extracted FEVER wiki-pages folder; see the README for the command.")
+    st.code('python -m scripts.build_sqlite_index "/path/to/wiki-pages"', language="bash")
     st.stop()
 
 index = load_index(str(INDEX_PATH), INDEX_PATH.stat().st_mtime_ns)
 index_metadata = json.loads(INDEX_META_PATH.read_text(encoding="utf-8")) if INDEX_META_PATH.exists() else {}
-sample_index = bool(index.documents) and all(str(doc.get("page", "")).startswith("Example_") for doc in index.documents.values())
+sample_index = index.is_sample if isinstance(index, SQLiteEvidenceIndex) else index.is_sample
 with st.sidebar:
     st.title("FEVER Lab")
     # Evidence search is the useful default when the optional verifier has not
@@ -63,8 +68,11 @@ with st.sidebar:
     top_k = st.slider("Evidence sentences", 1, 20, 5)
     method = st.selectbox("Ranking method", ["BM25", "TF-IDF rerank", "Boolean"]) if workspace == "Search evidence" else "BM25"
     st.divider()
-    st.metric("Indexed sentences", f"{len(index.documents):,}")
-    st.metric("Indexed terms", f"{len(index.postings):,}")
+    st.metric("Indexed sentences", f"{index.document_count:,}")
+    if index.term_count is not None:
+        st.metric("Indexed terms", f"{index.term_count:,}")
+    elif isinstance(index, SQLiteEvidenceIndex):
+        st.caption("Search index: SQLite FTS5 / BM25")
     st.caption("Verifier: trained baseline available" if MODEL_PATH.exists() else "Verifier: retrieval-only abstention")
     if sample_index:
         st.warning("Demo corpus loaded. These illustrative sentences are not the official FEVER dataset.")
@@ -72,13 +80,13 @@ with st.sidebar:
 st.caption("Retrieval similarity measures textual relevance. It is not a truth score or calibrated confidence.")
 if sample_index:
     st.info(
-        f"The current index contains only {len(index.documents):,} illustrative example sentences, "
+        f"The current index contains only {index.document_count:,} illustrative example sentences, "
         "not the full FEVER/Wikipedia corpus. Try **Pacific Ocean** to see a sample search result. "
         "Other topics may have no matching evidence until you build an index from the official Wikipedia sentence data."
     )
 elif index_metadata.get("limit") is not None:
     st.warning(
-        f"Partial index: {len(index.documents):,} sentences were indexed from the FEVER Wikipedia corpus. "
+        f"Partial index: {index.document_count:,} sentences were indexed from the FEVER Wikipedia corpus. "
         "Searches for topics outside this portion may return no evidence. A complete index requires processing the full corpus."
     )
 if workspace == "Verify a claim" and not MODEL_PATH.exists():
@@ -114,8 +122,8 @@ if submitted:
                 rows = tfidf_retriever.search(claim.strip(), candidates, top_k)
             else:
                 ids = boolean_retriever.search(claim.strip(), index)
-                rows = [{**index.documents[doc_id], "rank": rank, "score": None}
-                        for rank, doc_id in enumerate(ids[:top_k], 1)]
+                rows = [{**row, "rank": rank, "score": None}
+                        for rank, row in enumerate(index.get_documents(ids[:top_k]), 1)]
         st.subheader(f"{len(rows)} ranked evidence sentence(s)")
         show_evidence(rows)
     else:
@@ -132,8 +140,8 @@ if submitted:
             st.subheader("TF-IDF over BM25 candidates")
             show_evidence(tfidf_rows)
         with st.expander("Boolean matches"):
-            show_evidence([{**index.documents[doc_id], "rank": rank, "score": None}
-                           for rank, doc_id in enumerate(boolean_ids, 1)])
+            show_evidence([{**row, "rank": rank, "score": None}
+                           for rank, row in enumerate(index.get_documents(boolean_ids), 1)])
 
 with st.expander("How to interpret results"):
     st.markdown("""
