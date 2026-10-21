@@ -10,19 +10,6 @@
   "seeded_query_sentences": 144,
   "sampling": "Deterministic random sentence sample plus top BM25 matches for demo topics",
   "seed": 2026,
-  "demo_topics": [
-    "Eiffel Tower Paris",
-    "Pacific Ocean largest",
-    "Barack Obama Hawaii",
-    "Larry Bird basketball",
-    "India capital New Delhi",
-    "Taj Mahal India",
-    "Mount Everest highest mountain",
-    "Albert Einstein physicist",
-    "World War II",
-    "NASA space",
-    "Google search engine",
-    "cricket sport"
-  ],
+  "demo_topics": ["Eiffel Tower Paris", "Pacific Ocean largest", "Barack Obama Hawaii", "Larry Bird basketball", "India capital New Delhi", "Taj Mahal India", "Mount Everest highest mountain", "Albert Einstein physicist", "World War II", "NASA space", "Google search engine", "cricket sport"],
   "backend": "SQLite FTS5 / BM25"
 }
