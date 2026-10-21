@@ -85,7 +85,7 @@ def load_model(path: str):
     with Path(path).open("rb") as stream:
         return pickle.load(stream)
 
-def show_evidence(rows: list[dict]) -> None:
+def show_evidence(rows: list[dict], key_prefix: str = "evidence") -> None:
     if not rows:
         st.info("No evidence sentences were retrieved for this query.")
         return
@@ -94,7 +94,9 @@ def show_evidence(rows: list[dict]) -> None:
         sentence_id = row.get("sentence_id", "?")
         score = row.get("score")
         score_label = f"Score {score:.6f}" if isinstance(score, (int, float)) else "Boolean match"
-        with st.container(border=True, key=f"evidence_{row.get('rank', 'unknown')}"):
+        # Each Streamlit container key must be unique across the whole script
+        # run. Retriever comparisons render several ranked lists side by side.
+        with st.container(border=True, key=f"{key_prefix}_{row.get('rank', 'unknown')}"):
             meta, score_col = st.columns([5, 1])
             page_title = page.replace("_", " ")
             article_url = f"https://en.wikipedia.org/wiki/{quote(page.replace(' ', '_'))}"
@@ -195,7 +197,7 @@ if submitted:
         st.write(result["explanation"])
         st.caption(f"Method: {result['method']}")
         st.subheader("Retrieved evidence")
-        show_evidence(result["evidence"])
+        show_evidence(result["evidence"], key_prefix="verified_evidence")
     elif workspace == "Search evidence":
         with st.spinner("Searching the index…"):
             if method == "BM25":
@@ -210,7 +212,7 @@ if submitted:
         st.markdown("<p class='section-kicker'>Search results</p>", unsafe_allow_html=True)
         st.subheader(f"{len(rows)} ranked evidence sentence(s)")
         st.caption(f"Query: {claim.strip()} · Ranking: {method}")
-        show_evidence(rows)
+        show_evidence(rows, key_prefix="search_evidence")
     else:
         with st.spinner("Comparing retrieval methods…"):
             bm25_rows = bm25_retriever.search(claim.strip(), index, top_k)
@@ -220,13 +222,14 @@ if submitted:
         left, right = st.columns(2)
         with left:
             st.subheader("BM25")
-            show_evidence(bm25_rows)
+            show_evidence(bm25_rows, key_prefix="compare_bm25")
         with right:
             st.subheader("TF-IDF over BM25 candidates")
-            show_evidence(tfidf_rows)
+            show_evidence(tfidf_rows, key_prefix="compare_tfidf")
         with st.expander("Boolean matches"):
             show_evidence([{**row, "rank": rank, "score": None}
-                           for rank, row in enumerate(index.get_documents(boolean_ids), 1)])
+                           for rank, row in enumerate(index.get_documents(boolean_ids), 1)],
+                          key_prefix="compare_boolean")
 
 with st.expander("How to interpret results", expanded=False):
     st.markdown("""

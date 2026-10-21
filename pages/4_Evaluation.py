@@ -7,21 +7,40 @@ st.caption("Only computed run artifacts are shown. Sample fixtures are not FEVER
 results = Path("artifacts/results")
 classification_path = results / "dev_metrics.json"
 retrieval_path = results / "retrieval_metrics.json"
-index_path = Path("artifacts/indexes/fever_index.meta.json")
+full_index_path = Path("artifacts/indexes/fever_index.meta.json")
+preview_index_path = Path("data/demo/fever_demo.meta.json")
+index_path = full_index_path if full_index_path.exists() else preview_index_path
 
 if index_path.exists():
     index = json.loads(index_path.read_text(encoding="utf-8"))
-    st.subheader("Index build")
+    st.subheader("Index build" if index_path == full_index_path else "Deployment preview index")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Sentences", f"{index.get('sentences', 0):,}")
-    c2.metric("Terms", f"{index.get('terms', 0):,}")
-    c3.metric("Build time", f"{index.get('build_seconds', 0):.2f} s")
+    c2.metric("Terms", f"{index['terms']:,}" if isinstance(index.get("terms"), int) else "—")
+    c3.metric("Build time", f"{index['build_seconds']:.2f} s" if isinstance(index.get("build_seconds"), (int, float)) else "—")
     c4.metric("Index size", f"{index.get('index_bytes', 0) / (1024 * 1024):.2f} MB")
+    if index.get("deployment_demo"):
+        st.caption("This is a sampled deployment preview. Use the full local index for academic evaluation.")
 
 has_classification = classification_path.exists()
 has_retrieval = retrieval_path.exists()
 if not has_classification and not has_retrieval:
-    st.info("No evaluation runs yet. Use the train, development evaluation, and retrieval evaluation commands in the README. This page will not invent placeholder scores.")
+    st.info(
+        "The dashboard is ready, but no evaluation reports have been generated for this deployment yet. "
+        "Accuracy and its confusion matrix require a trained verifier and a labeled development split; "
+        "retrieval metrics require FEVER evidence annotations. The small deployment preview cannot produce "
+        "official benchmark scores on its own."
+    )
+    with st.expander("Generate the evaluation reports"):
+        st.markdown("Download the official FEVER claim splits and Wikipedia sentence data, place them in `data/raw/`, and build the full index. Then run these commands from the project folder:")
+        st.code(
+            "python -m scripts.build_index data/raw/wiki-pages.jsonl --output artifacts/indexes/fever_index.json\n"
+            "python -m scripts.train_model --train data/raw/train.jsonl --index artifacts/indexes/fever_index.json\n"
+            "python -m scripts.run_evaluation --dev data/raw/dev.jsonl --index artifacts/indexes/fever_index.json\n"
+            "python -m scripts.run_retrieval_evaluation --claims data/raw/dev.jsonl --index artifacts/indexes/fever_index.json --top-k 5",
+            language="bash",
+        )
+        st.caption("The reports are written under `artifacts/results/`. Keep the full dataset and index local; only publish metrics you have actually computed.")
 
 if has_classification:
     report = json.loads(classification_path.read_text(encoding="utf-8"))
