@@ -11,12 +11,29 @@ from src.retrieval import bm25_retriever, boolean_retriever, tfidf_retriever
 st.set_page_config(page_title="FEVER Evidence Lab", page_icon="🔎", layout="wide")
 st.markdown("""
 <style>
-  .block-container {padding-top: 2rem; max-width: 1180px;}
-  .hero {padding: 1.35rem 1.5rem; border-radius: 16px; background: linear-gradient(115deg,#172554,#1d4ed8); color: white; margin-bottom: 1rem;}
-  .hero h1 {margin: 0 0 .35rem 0; color: white;}
-  .hero p {margin: 0; color: #dbeafe;}
-  .evidence {padding: 1rem 1.15rem; margin: .65rem 0; border: 1px solid rgba(128,128,128,.28); border-radius: 12px;}
-  .evidence small {opacity:.78;}
+  .stApp {background-image:radial-gradient(ellipse at 3% 10%,rgba(14,165,233,.10),transparent 33%),radial-gradient(ellipse at 94% 32%,rgba(168,85,247,.09),transparent 30%);}
+  .block-container {padding-top:2rem; padding-bottom:4rem; max-width:1160px;}
+  [data-testid="stSidebar"] {border-right:1px solid rgba(128,128,128,.16); background:linear-gradient(180deg,rgba(14,165,233,.06),rgba(168,85,247,.035) 48%,rgba(251,146,60,.035));}
+  [data-testid="stSidebar"] [data-testid="stMetric"] {padding:.75rem; border:1px solid rgba(56,189,248,.26); border-left:4px solid #38bdf8; border-radius:12px; background:linear-gradient(115deg,rgba(14,165,233,.10),rgba(168,85,247,.06));}
+  .hero {position:relative; overflow:hidden; padding:2rem 2.1rem; border-radius:22px; background:linear-gradient(112deg,#10233f 0%,#174ea6 48%,#6841c8 78%,#a13b92 100%); color:#fff; margin:.3rem 0 1.25rem; box-shadow:0 14px 35px rgba(23,78,166,.2);}
+  .hero:before {content:""; position:absolute; width:190px; height:190px; right:70px; bottom:-140px; border-radius:50%; background:rgba(45,212,191,.36); filter:blur(2px);}
+  .hero:after {content:""; position:absolute; width:250px; height:250px; right:-60px; top:-135px; border:1px solid rgba(255,255,255,.25); border-radius:50%; box-shadow:0 0 0 28px rgba(255,255,255,.055),0 0 0 58px rgba(255,255,255,.04);}
+  .hero .eyebrow {font-size:.76rem; letter-spacing:.14em; text-transform:uppercase; color:#a5f3fc; font-weight:700; margin:0 0 .5rem;}
+  .hero h1 {font-size:2.15rem; line-height:1.15; margin:0 0 .55rem; color:#fff; letter-spacing:-.035em;}
+  .hero p {max-width:690px; margin:0; color:#dbeafe; font-size:1.02rem; line-height:1.55;}
+  .section-kicker {font-size:.76rem; font-weight:800; letter-spacing:.1em; text-transform:uppercase; color:#0e9f9a; margin:.5rem 0 .25rem;}
+  .st-key-search_panel {padding:1.2rem 1.3rem .25rem; border:1px solid rgba(45,212,191,.34); border-radius:18px; background:linear-gradient(135deg,rgba(14,165,233,.075),rgba(168,85,247,.055) 55%,rgba(251,146,60,.055)); margin:.5rem 0 1.2rem; box-shadow:0 8px 24px rgba(14,165,233,.06);}
+  .st-key-example_0 button {border-color:rgba(56,189,248,.58); background:rgba(14,165,233,.12);}
+  .st-key-example_1 button {border-color:rgba(45,212,191,.58); background:rgba(20,184,166,.12);}
+  .st-key-example_2 button {border-color:rgba(251,146,60,.62); background:rgba(249,115,22,.12);}
+  .st-key-example_0 button:hover,.st-key-example_1 button:hover,.st-key-example_2 button:hover {filter:brightness(1.13); border-color:rgba(255,255,255,.45);}
+  div[data-testid="stFormSubmitButton"] button {min-height:2.8rem; font-weight:800; border:0; border-radius:10px; color:white; background:linear-gradient(100deg,#0284c7,#4f46e5 55%,#9333ea); box-shadow:0 6px 18px rgba(79,70,229,.25);}
+  div[data-testid="stFormSubmitButton"] button:hover {filter:brightness(1.1); border:0; color:white;}
+  div[data-testid="stButton"] button {border-radius:999px; transition:transform .15s ease,filter .15s ease;}
+  div[data-testid="stButton"] button:hover {transform:translateY(-1px);}
+  [class*="st-key-evidence_"] {border-color:rgba(45,212,191,.35)!important; background:linear-gradient(110deg,rgba(14,165,233,.055),rgba(168,85,247,.04)); box-shadow:0 5px 18px rgba(15,23,42,.06);}
+  [data-testid="stAlert"] {border-radius:13px;}
+  @media (max-width: 700px) {.block-container {padding-top:1rem;} .hero {padding:1.4rem; border-radius:16px;} .hero h1 {font-size:1.7rem;}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -47,11 +64,23 @@ def show_evidence(rows: list[dict]) -> None:
         sentence_id = row.get("sentence_id", "?")
         score = row.get("score")
         score_label = f"Score {score:.6f}" if isinstance(score, (int, float)) else "Boolean match"
-        with st.container(border=True):
-            st.caption(f"#{row.get('rank', '–')} · {page} · sentence {sentence_id} · {score_label}")
+        with st.container(border=True, key=f"evidence_{row.get('rank', 'unknown')}"):
+            meta, score_col = st.columns([5, 1])
+            meta.markdown(f"**{page}**  ·  Sentence {sentence_id}")
+            score_col.caption(f"Rank **#{row.get('rank', '–')}**")
             st.write(row.get("text", ""))
+            st.caption(score_label)
 
-st.markdown("<div class='hero'><h1>FEVER Evidence Lab</h1><p>Find source sentences first. Review the evidence before interpreting a verdict.</p></div>", unsafe_allow_html=True)
+def use_example(query: str) -> None:
+    st.session_state["claim_input"] = query
+
+st.markdown("""
+<div class='hero'>
+  <p class='eyebrow'>FEVER · Evidence retrieval and fact checking</p>
+  <h1>Explore the evidence behind a claim</h1>
+  <p>Search millions of Wikipedia sentences, compare retrieval methods, and inspect the sources before drawing a conclusion.</p>
+</div>
+""", unsafe_allow_html=True)
 if not INDEX_PATH.exists():
     st.warning("The knowledge index is not built yet. Use the disk-based builder on the extracted FEVER wiki-pages folder; see the README for the command.")
     st.code('python -m scripts.build_sqlite_index "/path/to/wiki-pages"', language="bash")
@@ -61,14 +90,15 @@ index = load_index(str(INDEX_PATH), INDEX_PATH.stat().st_mtime_ns)
 index_metadata = json.loads(INDEX_META_PATH.read_text(encoding="utf-8")) if INDEX_META_PATH.exists() else {}
 sample_index = index.is_sample if isinstance(index, SQLiteEvidenceIndex) else index.is_sample
 with st.sidebar:
-    st.title("FEVER Lab")
+    st.markdown("### 🔎 FEVER Lab")
+    st.caption("Information retrieval workspace")
     # Evidence search is the useful default when the optional verifier has not
     # been trained yet. The verifier intentionally abstains without that model.
-    workspace = st.radio("Workspace", ["Verify a claim", "Search evidence", "Compare retrievers"], index=1)
+    workspace = st.radio("Choose a workspace", ["Search evidence", "Verify a claim", "Compare retrievers"], index=0)
     top_k = st.slider("Evidence sentences", 1, 20, 5)
     method = st.selectbox("Ranking method", ["BM25", "TF-IDF rerank", "Boolean"]) if workspace == "Search evidence" else "BM25"
     st.divider()
-    st.metric("Indexed sentences", f"{index.document_count:,}")
+    st.metric("Evidence sentences", f"{index.document_count:,}")
     if index.term_count is not None:
         st.metric("Indexed terms", f"{index.term_count:,}")
     elif isinstance(index, SQLiteEvidenceIndex):
@@ -77,7 +107,8 @@ with st.sidebar:
     if sample_index:
         st.warning("Demo corpus loaded. These illustrative sentences are not the official FEVER dataset.")
 
-st.caption("Retrieval similarity measures textual relevance. It is not a truth score or calibrated confidence.")
+st.markdown("<p class='section-kicker'>Start with a claim or topic</p>", unsafe_allow_html=True)
+st.caption("Results are source sentences ranked by text relevance. A high rank does not by itself prove a claim.")
 if sample_index:
     st.info(
         f"The current index contains only {index.document_count:,} illustrative example sentences, "
@@ -95,9 +126,20 @@ if workspace == "Verify a claim" and not MODEL_PATH.exists():
         "**NOT ENOUGH INFO**. It still shows retrieved sentences when available. "
         "Use **Search evidence** to see search results without a verdict."
     )
-with st.form("claim_form", clear_on_submit=False):
-    claim = st.text_area("Claim or search query", placeholder="Example: The Pacific Ocean is the largest ocean on Earth.", height=105)
-    submitted = st.form_submit_button("Run", type="primary", use_container_width=True)
+with st.container(key="search_panel"):
+    st.markdown("**Try an example**")
+    example_cols = st.columns(3)
+    examples = [
+        "The Eiffel Tower is located in Paris.",
+        "The Pacific Ocean is the largest ocean on Earth.",
+        "Barack Obama was born in Hawaii.",
+    ]
+    for col, example in zip(example_cols, examples):
+        with col:
+            st.button(example, key=f"example_{examples.index(example)}", on_click=use_example, args=(example,))
+    with st.form("claim_form", clear_on_submit=False):
+        claim = st.text_area("Claim or search query", placeholder="Type a person, place, event, or a full claim…", height=105, key="claim_input")
+        submitted = st.form_submit_button("Search evidence  →", type="primary", use_container_width=True)
 
 if submitted:
     if not claim.strip():
@@ -124,7 +166,9 @@ if submitted:
                 ids = boolean_retriever.search(claim.strip(), index)
                 rows = [{**row, "rank": rank, "score": None}
                         for rank, row in enumerate(index.get_documents(ids[:top_k]), 1)]
+        st.markdown("<p class='section-kicker'>Search results</p>", unsafe_allow_html=True)
         st.subheader(f"{len(rows)} ranked evidence sentence(s)")
+        st.caption(f"Query: {claim.strip()} · Ranking: {method}")
         show_evidence(rows)
     else:
         with st.spinner("Comparing retrieval methods…"):
@@ -143,7 +187,7 @@ if submitted:
             show_evidence([{**row, "rank": rank, "score": None}
                            for rank, row in enumerate(index.get_documents(boolean_ids), 1)])
 
-with st.expander("How to interpret results"):
+with st.expander("How to interpret results", expanded=False):
     st.markdown("""
     - **SUPPORTS / REFUTES** are predictions from the saved trained baseline; inspect the evidence sentences before relying on them.
     - **NOT ENOUGH INFO** means this system did not establish a verdict from its current evidence. It does not mean the claim is false.
