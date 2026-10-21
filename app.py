@@ -14,32 +14,23 @@ from src.indexing.sqlite_index import SQLiteEvidenceIndex
 from src.pipeline.fact_verifier import verify
 from src.retrieval import bm25_retriever, boolean_retriever, tfidf_retriever
 
-st.set_page_config(page_title="FEVER Evidence Lab", page_icon="🔎", layout="wide")
+st.set_page_config(page_title="FEVER Retrieval Study", page_icon="📄", layout="wide")
 st.markdown("""
 <style>
-  .stApp {background-image:radial-gradient(ellipse at 3% 10%,rgba(14,165,233,.10),transparent 33%),radial-gradient(ellipse at 94% 32%,rgba(168,85,247,.09),transparent 30%);}
-  .block-container {padding-top:2rem; padding-bottom:4rem; max-width:1160px;}
-  [data-testid="stSidebar"] {border-right:1px solid rgba(128,128,128,.16); background:linear-gradient(180deg,rgba(14,165,233,.06),rgba(168,85,247,.035) 48%,rgba(251,146,60,.035));}
-  [data-testid="stSidebar"] [data-testid="stMetric"] {padding:.75rem; border:1px solid rgba(56,189,248,.26); border-left:4px solid #38bdf8; border-radius:12px; background:linear-gradient(115deg,rgba(14,165,233,.10),rgba(168,85,247,.06));}
-  .hero {position:relative; overflow:hidden; padding:2rem 2.1rem; border-radius:22px; background:linear-gradient(112deg,#10233f 0%,#174ea6 48%,#6841c8 78%,#a13b92 100%); color:#fff; margin:.3rem 0 1.25rem; box-shadow:0 14px 35px rgba(23,78,166,.2);}
-  .hero:before {content:""; position:absolute; width:190px; height:190px; right:70px; bottom:-140px; border-radius:50%; background:rgba(45,212,191,.36); filter:blur(2px);}
-  .hero:after {content:""; position:absolute; width:250px; height:250px; right:-60px; top:-135px; border:1px solid rgba(255,255,255,.25); border-radius:50%; box-shadow:0 0 0 28px rgba(255,255,255,.055),0 0 0 58px rgba(255,255,255,.04);}
-  .hero .eyebrow {font-size:.76rem; letter-spacing:.14em; text-transform:uppercase; color:#a5f3fc; font-weight:700; margin:0 0 .5rem;}
-  .hero h1 {font-size:2.15rem; line-height:1.15; margin:0 0 .55rem; color:#fff; letter-spacing:-.035em;}
-  .hero p {max-width:690px; margin:0; color:#dbeafe; font-size:1.02rem; line-height:1.55;}
-  .section-kicker {font-size:.76rem; font-weight:800; letter-spacing:.1em; text-transform:uppercase; color:#0e9f9a; margin:.5rem 0 .25rem;}
-  .st-key-search_panel {padding:1.2rem 1.3rem .25rem; border:1px solid rgba(45,212,191,.34); border-radius:18px; background:linear-gradient(135deg,rgba(14,165,233,.075),rgba(168,85,247,.055) 55%,rgba(251,146,60,.055)); margin:.5rem 0 1.2rem; box-shadow:0 8px 24px rgba(14,165,233,.06);}
-  .st-key-example_0 button {border-color:rgba(56,189,248,.58); background:rgba(14,165,233,.12);}
-  .st-key-example_1 button {border-color:rgba(45,212,191,.58); background:rgba(20,184,166,.12);}
-  .st-key-example_2 button {border-color:rgba(251,146,60,.62); background:rgba(249,115,22,.12);}
-  .st-key-example_0 button:hover,.st-key-example_1 button:hover,.st-key-example_2 button:hover {filter:brightness(1.13); border-color:rgba(255,255,255,.45);}
-  div[data-testid="stFormSubmitButton"] button {min-height:2.8rem; font-weight:800; border:0; border-radius:10px; color:white; background:linear-gradient(100deg,#0284c7,#4f46e5 55%,#9333ea); box-shadow:0 6px 18px rgba(79,70,229,.25);}
-  div[data-testid="stFormSubmitButton"] button:hover {filter:brightness(1.1); border:0; color:white;}
-  div[data-testid="stButton"] button {border-radius:999px; transition:transform .15s ease,filter .15s ease;}
-  div[data-testid="stButton"] button:hover {transform:translateY(-1px);}
-  [class*="st-key-evidence_"] {border-color:rgba(45,212,191,.35)!important; background:linear-gradient(110deg,rgba(14,165,233,.055),rgba(168,85,247,.04)); box-shadow:0 5px 18px rgba(15,23,42,.06);}
-  [data-testid="stAlert"] {border-radius:13px;}
-  @media (max-width: 700px) {.block-container {padding-top:1rem;} .hero {padding:1.4rem; border-radius:16px;} .hero h1 {font-size:1.7rem;}}
+  .block-container {padding-top:1.6rem; padding-bottom:3.5rem; max-width:1080px;}
+  [data-testid="stSidebar"] {border-right:1px solid rgba(128,128,128,.18);}
+  [data-testid="stSidebar"] [data-testid="stMetric"] {padding:.7rem; border:1px solid rgba(128,128,128,.2); border-left:3px solid #56738a; border-radius:6px;}
+  .hero {padding:1.25rem 1.4rem; border:1px solid rgba(128,128,128,.24); border-left:4px solid #56738a; border-radius:6px; margin:.25rem 0 1.1rem;}
+  .hero .eyebrow {font-size:.78rem; letter-spacing:.06em; text-transform:uppercase; opacity:.72; font-weight:650; margin:0 0 .45rem;}
+  .hero h1 {font-size:1.9rem; line-height:1.2; margin:0 0 .45rem; letter-spacing:-.02em;}
+  .hero p {max-width:760px; margin:0; font-size:1rem; line-height:1.55; opacity:.86;}
+  .section-kicker {font-size:.8rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase; opacity:.75; margin:.5rem 0 .25rem;}
+  .st-key-search_panel {padding:1rem 1.1rem .25rem; border:1px solid rgba(128,128,128,.2); border-radius:6px; margin:.5rem 0 1.1rem;}
+  div[data-testid="stFormSubmitButton"] button {min-height:2.65rem; font-weight:650; border-radius:6px;}
+  div[data-testid="stButton"] button {border-radius:6px;}
+  [class*="st-key-evidence_"] {border-color:rgba(128,128,128,.24)!important; border-radius:6px;}
+  [data-testid="stAlert"] {border-radius:6px;}
+  @media (max-width: 700px) {.block-container {padding-top:1rem;} .hero {padding:1rem;} .hero h1 {font-size:1.55rem;}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -110,9 +101,9 @@ def use_example(query: str) -> None:
 
 st.markdown("""
 <div class='hero'>
-  <p class='eyebrow'>FEVER · Evidence retrieval and fact checking</p>
-  <h1>Explore the evidence behind a claim</h1>
-  <p>Search Wikipedia sentences, compare retrieval methods, and inspect the sources before drawing a conclusion.</p>
+  <p class='eyebrow'>Information retrieval semester project · FEVER</p>
+  <h1>Comparing methods for FEVER evidence retrieval</h1>
+  <p>This project compares BM25, TF-IDF reranking, and Boolean search over Wikipedia sentences associated with FEVER claims. Results are ranked text matches; they are not proof of a claim.</p>
 </div>
 """, unsafe_allow_html=True)
 if INDEX_PATH:
@@ -128,12 +119,12 @@ else:
 sample_index = index.is_sample
 deployment_demo = bool(index_metadata.get("deployment_demo"))
 with st.sidebar:
-    st.markdown("### 🔎 FEVER Lab")
-    st.caption("Information retrieval workspace")
+    st.markdown("### FEVER Retrieval Study")
+    st.caption("BM25 · TF-IDF · Boolean")
     # Evidence search is the useful default when the optional verifier has not
     # been trained yet. The verifier intentionally abstains without that model.
-    workspace = st.radio("Choose a workspace", ["Search evidence", "Verify a claim", "Compare retrievers"], index=0)
-    top_k = st.slider("Evidence sentences", 1, 20, 5)
+    workspace = st.radio("Task", ["Search evidence", "Verify a claim", "Compare methods"], index=0)
+    top_k = st.slider("Results per method", 1, 20, 5)
     method = st.selectbox("Ranking method", ["BM25", "TF-IDF rerank", "Boolean"]) if workspace == "Search evidence" else "BM25"
     st.divider()
     st.metric("Evidence sentences", f"{index.document_count:,}")
@@ -145,8 +136,8 @@ with st.sidebar:
     if sample_index:
         st.warning("Demo corpus loaded. These illustrative sentences are not the official FEVER dataset.")
 
-st.markdown("<p class='section-kicker'>Start with a claim or topic</p>", unsafe_allow_html=True)
-st.caption("Results are source sentences ranked by text relevance. A high rank does not by itself prove a claim.")
+st.markdown("<p class='section-kicker'>Search a claim or topic</p>", unsafe_allow_html=True)
+st.caption("Search returns source sentences ranked by textual relevance. Inspect the linked Wikipedia article before drawing a conclusion.")
 if sample_index:
     st.info(
         f"The current index contains only {index.document_count:,} illustrative example sentences, "
@@ -170,7 +161,7 @@ if workspace == "Verify a claim" and not MODEL_PATH.exists():
         "Use **Search evidence** to see search results without a verdict."
     )
 with st.container(key="search_panel"):
-    st.markdown("**Try an example**")
+    st.markdown("**Example queries**")
     example_cols = st.columns(3)
     examples = [
         "The Eiffel Tower is located in Paris.",
