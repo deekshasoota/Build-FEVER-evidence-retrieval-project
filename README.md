@@ -10,11 +10,11 @@ Given a natural-language claim, retrieve source sentences and determine whether 
 
 ## Scope and limitations
 
-The implemented lexical IR path is local and does not require a transformer model. No full Wikipedia dump, FEVER results, or trained model is bundled. A ranking score measures textual relevance only. `NOT ENOUGH INFO` means the system could not establish a verdict from its available evidence; it does not imply a claim is false.
+The implemented lexical IR path is local and does not require a transformer model. No full Wikipedia dump, FEVER results, or trained model is bundled. A small FEVER-derived preview index can be included for deployment; it is not a replacement for the full corpus. A ranking score measures textual relevance only. `NOT ENOUGH INFO` means the system could not establish a verdict from its available evidence; it does not imply a claim is false.
 
 ## Dataset and provenance
 
-Use the official FEVER claims and Wikipedia sentence corpus from the [FEVER project](https://fever.ai/dataset/fever.html) and [official GitHub repository](https://github.com/awslabs/fever). Read the dataset terms and citation information at the source. Place downloaded JSONL files under `data/raw/`; keep them out of Git. The wiki page collection is large, so it is not downloaded automatically. `data/sample/` contains tiny illustrative records for smoke checks only; these are not FEVER data and must not be used to report academic results.
+Use the official FEVER claims and Wikipedia sentence corpus from the [FEVER project](https://fever.ai/dataset/fever.html) and [official GitHub repository](https://github.com/awslabs/fever). Read the dataset terms and citation information at the source. Place downloaded JSONL files under `data/raw/`; keep them out of Git. The full wiki page collection is large, so it is not downloaded automatically. `data/sample/` contains tiny illustrative records for smoke checks only; these are not FEVER data and must not be used to report academic results.
 
 ## Requirements and setup
 
@@ -69,6 +69,18 @@ streamlit run app.py
 ```
 
 For the full Wikipedia corpus, use `scripts.build_sqlite_index`: it streams one or more JSONL files into a disk-backed SQLite FTS5 index, so it does not keep the complete corpus in Python memory. The app automatically prefers `artifacts/indexes/fever_index.sqlite3` when it exists. Add `--limit 100000` for a small preview; omit the limit to process every sentence in the extracted corpus. Full indexing can take a long time and use substantial disk space. The older JSON builder remains available for small experiments and the training/evaluation scripts. After building, refresh the app. For a sample-only smoke index, `python -c 'from src.data.load_data import read_jsonl; from src.indexing.inverted_index import InvertedIndex; i=InvertedIndex(); [i.add(r) for r in read_jsonl("data/sample/evidence.jsonl")]; i.save("artifacts/indexes/fever_index.json")'`.
+
+## Deployment
+
+The full SQLite index under `artifacts/indexes/` is intentionally ignored by Git. A clean GitHub checkout therefore needs a small index to run as a useful public preview. After building the full local FEVER index, create a deterministic 100,000-sentence preview index:
+
+```bash
+python -m scripts.build_demo_index --source artifacts/indexes/fever_index.sqlite3 --output data/demo/fever_demo.sqlite3 --size 100000
+```
+
+Compress the generated database before committing it (`gzip -kf data/demo/fever_demo.sqlite3`) and commit `data/demo/fever_demo.sqlite3.gz` with its `.meta.json` sidecar. The app expands the archive into temporary storage at startup. It prefers the full local index when present, then uses this preview index on a clean deployment. The interface clearly labels the preview and warns that a search can miss evidence outside the sampled sentences. To use another mounted index, set `FEVER_INDEX_PATH` to its path.
+
+The preview is derived from the FEVER June 2017 Wikipedia snapshot. Preserve the article source links shown with retrieved evidence and include the official [FEVER dataset citation and reuse terms](https://fever.ai/dataset/fever.html) when sharing the app. The preview is for demonstrating retrieval only; use the full corpus and official FEVER claim splits for academic evaluation.
 
 ## Training and evaluation status
 

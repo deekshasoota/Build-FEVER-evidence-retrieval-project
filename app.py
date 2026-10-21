@@ -1,8 +1,14 @@
 """Streamlit workspace for claim checking, evidence search, and retrieval comparison."""
 from pathlib import Path
+import gzip
 import json
+import os
+import shutil
+import tempfile
+from urllib.parse import quote
 import streamlit as st
 
+from src.data.load_data import read_jsonl
 from src.indexing.inverted_index import InvertedIndex
 from src.indexing.sqlite_index import SQLiteEvidenceIndex
 from src.pipeline.fact_verifier import verify
@@ -38,9 +44,33 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 SQLITE_INDEX_PATH = Path("artifacts/indexes/fever_index.sqlite3")
+DEMO_INDEX_PATH = Path("data/demo/fever_demo.sqlite3")
+DEMO_INDEX_ARCHIVE_PATH = Path("data/demo/fever_demo.sqlite3.gz")
 JSON_INDEX_PATH = Path("artifacts/indexes/fever_index.json")
-INDEX_PATH = SQLITE_INDEX_PATH if SQLITE_INDEX_PATH.exists() else JSON_INDEX_PATH
-INDEX_META_PATH = INDEX_PATH.with_suffix(".meta.json")
+configured_index = os.getenv("FEVER_INDEX_PATH")
+if configured_index:
+    INDEX_PATH = Path(configured_index)
+elif SQLITE_INDEX_PATH.exists():
+    INDEX_PATH = SQLITE_INDEX_PATH
+elif DEMO_INDEX_PATH.exists():
+    INDEX_PATH = DEMO_INDEX_PATH
+elif DEMO_INDEX_ARCHIVE_PATH.exists():
+    # Keep the GitHub deploy artifact small; expand the compressed SQLite file
+    # into the runtime's temporary directory before opening it.
+    expanded_demo_path = Path(tempfile.gettempdir()) / "fever_demo.sqlite3"
+    if not expanded_demo_path.exists() or expanded_demo_path.stat().st_mtime < DEMO_INDEX_ARCHIVE_PATH.stat().st_mtime:
+        with gzip.open(DEMO_INDEX_ARCHIVE_PATH, "rb") as compressed, expanded_demo_path.open("wb") as expanded:
+            shutil.copyfileobj(compressed, expanded)
+    INDEX_PATH = expanded_demo_path
+elif JSON_INDEX_PATH.exists():
+    INDEX_PATH = JSON_INDEX_PATH
+else:
+    INDEX_PATH = None
+INDEX_META_PATH = (
+    Path("data/demo/fever_demo.meta.json")
+    if INDEX_PATH == Path(tempfile.gettempdir()) / "fever_demo.sqlite3"
+    else INDEX_PATH.with_suffix(".meta.json") if INDEX_PATH else None
+)
 MODEL_PATH = Path("artifacts/models/verifier.pkl")
 
 @st.cache_resource(show_spinner="Loading the knowledge index…")
@@ -66,7 +96,9 @@ def show_evidence(rows: list[dict]) -> None:
         score_label = f"Score {score:.6f}" if isinstance(score, (int, float)) else "Boolean match"
         with st.container(border=True, key=f"evidence_{row.get('rank', 'unknown')}"):
             meta, score_col = st.columns([5, 1])
-            meta.markdown(f"**{page}**  ·  Sentence {sentence_id}")
+            page_title = page.replace("_", " ")
+            article_url = f"https://en.wikipedia.org/wiki/{quote(page.replace(' ', '_'))}"
+            meta.markdown(f"[{page_title}](<{article_url}>)  ·  Sentence {sentence_id}")
             score_col.caption(f"Rank **#{row.get('rank', '–')}**")
             st.write(row.get("text", ""))
             st.caption(score_label)
@@ -78,17 +110,21 @@ st.markdown("""
 <div class='hero'>
   <p class='eyebrow'>FEVER · Evidence retrieval and fact checking</p>
   <h1>Explore the evidence behind a claim</h1>
-  <p>Search millions of Wikipedia sentences, compare retrieval methods, and inspect the sources before drawing a conclusion.</p>
+  <p>Search Wikipedia sentences, compare retrieval methods, and inspect the sources before drawing a conclusion.</p>
 </div>
 """, unsafe_allow_html=True)
-if not INDEX_PATH.exists():
-    st.warning("The knowledge index is not built yet. Use the disk-based builder on the extracted FEVER wiki-pages folder; see the README for the command.")
-    st.code('python -m scripts.build_sqlite_index "/path/to/wiki-pages"', language="bash")
-    st.stop()
-
-index = load_index(str(INDEX_PATH), INDEX_PATH.stat().st_mtime_ns)
-index_metadata = json.loads(INDEX_META_PATH.read_text(encoding="utf-8")) if INDEX_META_PATH.exists() else {}
-sample_index = index.is_sample if isinstance(index, SQLiteEvidenceIndex) else index.is_sample
+if INDEX_PATH:
+    index = load_index(str(INDEX_PATH), INDEX_PATH.stat().st_mtime_ns)
+    index_metadata = json.loads(INDEX_META_PATH.read_text(encoding="utf-8")) if INDEX_META_PATH and INDEX_META_PATH.exists() else {}
+else:
+    # Keep a clean-checkout deployment usable while making the tiny fixture
+    # unmistakably different from a real FEVER corpus index.
+    index = InvertedIndex()
+    for record in read_jsonl("data/sample/evidence.jsonl"):
+        index.add(record)
+    index_metadata = {"source": "data/sample/evidence.jsonl", "limit": index.document_count}
+sample_index = index.is_sample
+deployment_demo = bool(index_metadata.get("deployment_demo"))
 with st.sidebar:
     st.markdown("### 🔎 FEVER Lab")
     st.caption("Information retrieval workspace")
@@ -114,6 +150,11 @@ if sample_index:
         f"The current index contains only {index.document_count:,} illustrative example sentences, "
         "not the full FEVER/Wikipedia corpus. Try **Pacific Ocean** to see a sample search result. "
         "Other topics may have no matching evidence until you build an index from the official Wikipedia sentence data."
+    )
+elif deployment_demo:
+    st.info(
+        f"Deployment preview index: {index.document_count:,} sentences sampled from the FEVER Wikipedia corpus. "
+        "Searches can miss evidence outside this preview. Your local full index is used automatically when available."
     )
 elif index_metadata.get("limit") is not None:
     st.warning(
@@ -194,3 +235,5 @@ with st.expander("How to interpret results", expanded=False):
     - BM25 and TF-IDF scores rank text matches. They are not probabilities or proof.
     - The comparison view reranks BM25 candidate sentences with TF-IDF so it does not vectorize the entire Wikipedia corpus on every query.
     """)
+
+st.caption("Wikipedia text is from the FEVER June 2017 snapshot. [FEVER dataset](https://fever.ai/dataset/fever.html) · [Attribution and reuse terms](https://fever.ai/download/fever/license.html).")
