@@ -6,10 +6,11 @@ from src.preprocessing.text_preprocessor import tokenize
 def search(query: str, index: InvertedIndex) -> list[str]:
     parts = re.split(r"\s+(AND|OR|NOT)\s+", query, flags=re.I)
     if not parts or not parts[0].strip(): return []
-    result = index.candidates(tokenize(parts[0]))
+    query_tokens = index.tokenize if hasattr(index, "tokenize") else tokenize
+    result = index.candidates(query_tokens(parts[0]))
     i = 1
     while i < len(parts):
-        op, terms = parts[i].upper(), index.candidates(tokenize(parts[i + 1]))
+        op, terms = parts[i].upper(), index.candidates(query_tokens(parts[i + 1]))
         if op == "AND": result &= terms
         elif op == "OR": result |= terms
         elif op == "NOT": result -= terms

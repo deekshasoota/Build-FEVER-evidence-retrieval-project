@@ -12,12 +12,13 @@ from src.data.load_data import read_jsonl
 from src.indexing.inverted_index import InvertedIndex
 from src.indexing.sqlite_index import SQLiteEvidenceIndex
 from src.pipeline.fact_verifier import verify
-from src.retrieval import bm25_retriever, boolean_retriever, tfidf_retriever
+from src.retrieval import (bm25_retriever, boolean_retriever,
+                           embedding_retriever, rrf_retriever, tfidf_retriever)
 
 st.set_page_config(page_title="FEVER Retrieval Study", page_icon="📄", layout="wide")
 st.markdown("""
 <style>
-  :root {--ir-plum:#5b4b8a; --ir-coral:#d7654b; --ir-teal:#258b82; --ir-gold:#d9a62e;}
+  :root {--ir-plum:#5b4b8a; --ir-coral:#d7654b; --ir-teal:#258b82; --ir-gold:#d9a62e; --ir-blue:#3976a8;}
   .block-container {padding-top:1.6rem; padding-bottom:3.5rem; max-width:1080px;}
   [data-testid="stSidebar"] {border-right:1px solid rgba(128,128,128,.18);}
   [data-testid="stSidebar"] [data-testid="stMetric"] {padding:.7rem; border:1px solid rgba(128,128,128,.2); border-left:3px solid var(--ir-teal); border-radius:7px; background:rgba(37,139,130,.07);}
@@ -39,11 +40,15 @@ st.markdown("""
   [class*="st-key-compare_bm25_"] {border-left:4px solid var(--ir-coral)!important;}
   [class*="st-key-compare_tfidf_"] {border-left:4px solid var(--ir-teal)!important;}
   [class*="st-key-compare_boolean_"] {border-left:4px solid var(--ir-plum)!important;}
+  [class*="st-key-compare_embedding_"] {border-left:4px solid var(--ir-blue)!important;}
+  [class*="st-key-compare_hybrid_"] {border-left:4px solid var(--ir-gold)!important;}
   .stTabs [data-baseweb="tab-list"] {gap:.35rem;}
   .stTabs [data-baseweb="tab"] {border-radius:7px 7px 0 0; padding:.55rem .8rem;}
   .stTabs [data-baseweb="tab-list"] button:nth-child(1)[aria-selected="true"] {border-bottom:3px solid var(--ir-coral);}
   .stTabs [data-baseweb="tab-list"] button:nth-child(2)[aria-selected="true"] {border-bottom:3px solid var(--ir-teal);}
   .stTabs [data-baseweb="tab-list"] button:nth-child(3)[aria-selected="true"] {border-bottom:3px solid var(--ir-plum);}
+  .stTabs [data-baseweb="tab-list"] button:nth-child(4)[aria-selected="true"] {border-bottom:3px solid var(--ir-blue);}
+  .stTabs [data-baseweb="tab-list"] button:nth-child(5)[aria-selected="true"] {border-bottom:3px solid var(--ir-gold);}
   [data-testid="stAlert"] {border-radius:7px;}
   @media (max-width: 700px) {.block-container {padding-top:1rem;} .hero {padding:1.1rem 1rem;} .hero h1 {font-size:1.55rem;}}
 </style>
@@ -85,11 +90,38 @@ def load_index(path: str, modified_ns: int) -> InvertedIndex | SQLiteEvidenceInd
         return SQLiteEvidenceIndex(path)
     return InvertedIndex.load(path)
 
+def preprocessing_config(index) -> dict:
+    return getattr(index, "preprocessing", {"remove_stopwords": False, "stemming": False})
+
 @st.cache_resource(show_spinner=False)
 def load_model(path: str):
     import pickle
     with Path(path).open("rb") as stream:
         return pickle.load(stream)
+
+@st.cache_resource(show_spinner="Preparing corpus-wide retrieval indexes…")
+def load_retrieval_corpus(path: str, modified_ns: int):
+    retrieval_index = load_index(path, modified_ns)
+    if retrieval_index.document_count > 100_000:
+        raise RuntimeError(
+            "TF-IDF and dense ranking are limited to 100,000 sentences in the interactive app to avoid excessive memory use. "
+            "Use a smaller comparison index."
+        )
+    return (retrieval_index.all_documents() if isinstance(retrieval_index, SQLiteEvidenceIndex)
+            else list(retrieval_index.documents.values()))
+
+@st.cache_resource(show_spinner="Building the corpus-wide TF-IDF matrix…")
+def load_tfidf_resources(path: str, modified_ns: int):
+    retrieval_index = load_index(path, modified_ns)
+    records = load_retrieval_corpus(path, modified_ns)
+    vectorizer, matrix = tfidf_retriever.build_index(records, preprocessing_config(retrieval_index))
+    return records, vectorizer, matrix
+
+@st.cache_resource(show_spinner="Loading sentence encoder and evidence vectors…")
+def load_embedding_resources(path: str, modified_ns: int, model_name: str):
+    records = load_retrieval_corpus(path, modified_ns)
+    encoder, vectors = embedding_retriever.encode_records(records, model_name)
+    return records, encoder, vectors
 
 def show_evidence(rows: list[dict], key_prefix: str = "evidence") -> None:
     if not rows:
@@ -118,7 +150,7 @@ st.markdown("""
 <div class='hero'>
   <p class='eyebrow'>Information retrieval semester project · FEVER</p>
   <h1>Comparing methods for FEVER evidence retrieval</h1>
-  <p>This project compares BM25, TF-IDF reranking, and Boolean search over Wikipedia sentences associated with FEVER claims. Results are ranked text matches; they are not proof of a claim.</p>
+  <p>This project compares TF-IDF, BM25, sentence embeddings, and reciprocal-rank fusion over Wikipedia sentences associated with FEVER claims. Results are ranked text matches; they are not proof of a claim.</p>
 </div>
 """, unsafe_allow_html=True)
 if INDEX_PATH:
@@ -135,12 +167,12 @@ sample_index = index.is_sample
 deployment_demo = bool(index_metadata.get("deployment_demo"))
 with st.sidebar:
     st.markdown("### FEVER Retrieval Study")
-    st.caption("BM25 · TF-IDF · Boolean")
+    st.caption("TF-IDF · BM25 · Embeddings · RRF")
     # Evidence search is the useful default when the optional verifier has not
     # been trained yet. The verifier intentionally abstains without that model.
     workspace = st.radio("Task", ["Search evidence", "Verify a claim", "Compare methods"], index=0)
-    top_k = st.slider("Results per method", 1, 20, 5)
-    method = st.selectbox("Ranking method", ["BM25", "TF-IDF rerank", "Boolean"]) if workspace == "Search evidence" else "BM25"
+    top_k = st.slider("Results per method", 1, 20, 10)
+    method = st.selectbox("Ranking method", ["BM25", "TF-IDF", "Sentence Embedding", "Hybrid RRF", "Boolean"]) if workspace == "Search evidence" else "BM25"
     st.divider()
     st.metric("Evidence sentences", f"{index.document_count:,}")
     if index.term_count is not None:
@@ -208,9 +240,52 @@ if submitted:
         with st.spinner("Searching the index…"):
             if method == "BM25":
                 rows = bm25_retriever.search(claim.strip(), index, top_k)
-            elif method == "TF-IDF rerank":
-                candidates = bm25_retriever.search(claim.strip(), index, max(100, top_k * 20))
-                rows = tfidf_retriever.search(claim.strip(), candidates, top_k)
+            elif method == "TF-IDF":
+                try:
+                    if INDEX_PATH:
+                        records, vectorizer, tfidf_matrix = load_tfidf_resources(
+                            str(INDEX_PATH), INDEX_PATH.stat().st_mtime_ns,
+                        )
+                    else:
+                        records = list(index.documents.values())
+                        vectorizer, tfidf_matrix = tfidf_retriever.build_index(records, preprocessing_config(index))
+                    rows = tfidf_retriever.search_index(
+                        claim.strip(), records, vectorizer, tfidf_matrix, top_k, preprocessing_config(index),
+                    )
+                except (RuntimeError, OSError, ValueError) as exc:
+                    st.error(f"TF-IDF search is unavailable: {exc}")
+                    rows = []
+            elif method in {"Sentence Embedding", "Hybrid RRF"}:
+                try:
+                    if INDEX_PATH:
+                        records, encoder, vectors = load_embedding_resources(
+                            str(INDEX_PATH), INDEX_PATH.stat().st_mtime_ns,
+                            embedding_retriever.DEFAULT_MODEL,
+                        )
+                    else:
+                        records = list(index.documents.values())
+                        encoder, vectors = embedding_retriever.encode_records(records)
+                    embedding_rows = embedding_retriever.search(
+                        claim.strip(), records, top_k, model=encoder, vectors=vectors,
+                    )
+                    if method == "Sentence Embedding":
+                        rows = embedding_rows
+                    else:
+                        if INDEX_PATH:
+                            records, vectorizer, tfidf_matrix = load_tfidf_resources(
+                                str(INDEX_PATH), INDEX_PATH.stat().st_mtime_ns,
+                            )
+                        else:
+                            records = list(index.documents.values())
+                            vectorizer, tfidf_matrix = tfidf_retriever.build_index(records, preprocessing_config(index))
+                        bm25_rows = bm25_retriever.search(claim.strip(), index, top_k)
+                        tfidf_rows = tfidf_retriever.search_index(
+                            claim.strip(), records, vectorizer, tfidf_matrix, top_k, preprocessing_config(index),
+                        )
+                        rows = rrf_retriever.fuse([bm25_rows, tfidf_rows, embedding_rows], top_k)
+                except Exception as exc:
+                    st.error(f"{method} is unavailable: {exc}")
+                    rows = []
             else:
                 ids = boolean_retriever.search(claim.strip(), index)
                 rows = [{**row, "rank": rank, "score": None}
@@ -218,20 +293,72 @@ if submitted:
         st.markdown("<p class='section-kicker'>Search results</p>", unsafe_allow_html=True)
         st.subheader(f"{len(rows)} ranked evidence sentence(s)")
         st.caption(f"Query: {claim.strip()} · Ranking: {method}")
+        if method == "Sentence Embedding":
+            st.caption(f"Encoder: `{embedding_retriever.DEFAULT_MODEL}` · cosine similarity")
+        elif method == "Hybrid RRF":
+            st.caption("Fused from BM25, corpus-wide TF-IDF, and sentence embeddings using reciprocal-rank fusion.")
         show_evidence(rows, key_prefix="search_evidence")
     else:
         with st.spinner("Comparing retrieval methods…"):
             bm25_rows = bm25_retriever.search(claim.strip(), index, top_k)
-            candidate_rows = bm25_retriever.search(claim.strip(), index, max(100, top_k * 20))
-            tfidf_rows = tfidf_retriever.search(claim.strip(), candidate_rows, top_k)
+            tfidf_error = None
+            try:
+                if INDEX_PATH:
+                    records, vectorizer, tfidf_matrix = load_tfidf_resources(
+                        str(INDEX_PATH), INDEX_PATH.stat().st_mtime_ns,
+                    )
+                else:
+                    records = list(index.documents.values())
+                    vectorizer, tfidf_matrix = tfidf_retriever.build_index(records, preprocessing_config(index))
+                tfidf_rows = tfidf_retriever.search_index(
+                    claim.strip(), records, vectorizer, tfidf_matrix, top_k, preprocessing_config(index),
+                )
+            except (RuntimeError, OSError, ValueError) as exc:
+                tfidf_error = str(exc)
+                tfidf_rows = []
             boolean_ids = boolean_retriever.search(claim.strip(), index)[:top_k]
-        bm25_tab, tfidf_tab, boolean_tab = st.tabs(["BM25 · lexical", "TF-IDF · reranked", "Boolean · term match"])
+            embedding_error = None
+            embedding_rows = []
+            try:
+                if INDEX_PATH:
+                    records, encoder, vectors = load_embedding_resources(
+                        str(INDEX_PATH), INDEX_PATH.stat().st_mtime_ns,
+                        embedding_retriever.DEFAULT_MODEL,
+                    )
+                else:
+                    records = list(index.documents.values())
+                    encoder, vectors = embedding_retriever.encode_records(records)
+                embedding_rows = embedding_retriever.search(
+                    claim.strip(), records, top_k, model=encoder, vectors=vectors,
+                )
+            except Exception as exc:
+                embedding_error = str(exc)
+            hybrid_error = tfidf_error or embedding_error
+            hybrid_rows = rrf_retriever.fuse([bm25_rows, tfidf_rows, embedding_rows], top_k)
+        bm25_tab, tfidf_tab, embedding_tab, hybrid_tab, boolean_tab = st.tabs([
+            "BM25 · lexical", "TF-IDF · cosine", "Sentence Embedding", "Hybrid · RRF", "Boolean · term match",
+        ])
         with bm25_tab:
             st.caption("Probabilistic term ranking with document-length normalization.")
             show_evidence(bm25_rows, key_prefix="compare_bm25")
         with tfidf_tab:
-            st.caption("Cosine similarity reranks the BM25 candidate set.")
-            show_evidence(tfidf_rows, key_prefix="compare_tfidf")
+            st.caption("TF-IDF weights are fitted across the full searchable corpus; cosine similarity ranks the sentences.")
+            if tfidf_error:
+                st.warning(f"TF-IDF retrieval is unavailable: {tfidf_error}")
+            else:
+                show_evidence(tfidf_rows, key_prefix="compare_tfidf")
+        with embedding_tab:
+            st.caption(f"Dense semantic retrieval with `{embedding_retriever.DEFAULT_MODEL}`.")
+            if embedding_error:
+                st.warning(f"Sentence embedding retrieval is unavailable: {embedding_error}")
+            else:
+                show_evidence(embedding_rows, key_prefix="compare_embedding")
+        with hybrid_tab:
+            st.caption("Reciprocal Rank Fusion combines BM25, corpus-wide TF-IDF, and sentence-embedding ranks.")
+            if hybrid_error:
+                st.warning(f"Hybrid RRF is unavailable: {hybrid_error}")
+            else:
+                show_evidence(hybrid_rows, key_prefix="compare_hybrid")
         with boolean_tab:
             st.caption("Exact token matches; results are not relevance-ranked.")
             show_evidence([{**row, "rank": rank, "score": None}
@@ -243,7 +370,7 @@ with st.expander("How to interpret results", expanded=False):
     - **SUPPORTS / REFUTES** are predictions from the saved trained baseline; inspect the evidence sentences before relying on them.
     - **NOT ENOUGH INFO** means this system did not establish a verdict from its current evidence. It does not mean the claim is false.
     - BM25 and TF-IDF scores rank text matches. They are not probabilities or proof.
-    - The comparison view reranks BM25 candidate sentences with TF-IDF so it does not vectorize the entire Wikipedia corpus on every query.
+    - The comparison view fits one TF-IDF model across the loaded corpus and caches it for reuse.
     """)
 
 st.caption("Wikipedia text is from the FEVER June 2017 snapshot. [FEVER dataset](https://fever.ai/dataset/fever.html) · [Attribution and reuse terms](https://fever.ai/download/fever/license.html).")

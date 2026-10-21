@@ -6,7 +6,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from src.preprocessing.text_preprocessor import tokenize
+from src.preprocessing.text_preprocessor import DEFAULT_CONFIG, tokenize_with_config
 
 
 class SQLiteEvidenceIndex:
@@ -18,6 +18,9 @@ class SQLiteEvidenceIndex:
         self.metadata: dict[str, Any] = {}
         if self.metadata_path.exists():
             self.metadata = json.loads(self.metadata_path.read_text(encoding="utf-8"))
+        with self._connect() as db:
+            columns = {row[1] for row in db.execute("PRAGMA table_info(evidence_fts)")}
+        self.has_preprocessed_terms = "terms" in columns
         count = self.metadata.get("sentences")
         if count is None:
             with self._connect() as db:
@@ -37,14 +40,22 @@ class SQLiteEvidenceIndex:
         return int(value) if value is not None else None
 
     @property
+    def preprocessing(self) -> dict[str, bool]:
+        return {**DEFAULT_CONFIG, **self.metadata.get("preprocessing", {})}
+
+    def tokenize(self, text: str) -> list[str]:
+        return tokenize_with_config(text, self.preprocessing)
+
+    @property
     def is_sample(self) -> bool:
         return str(self.metadata.get("source", "")).startswith("data/sample")
 
     def search_bm25(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
-        terms = tokenize(query)
+        terms = self.tokenize(query)
         if not terms or top_k < 1:
             return []
-        expression = " OR ".join('"' + term.replace('"', '""') + '"' for term in terms)
+        term_query = " OR ".join('"' + term.replace('"', '""') + '"' for term in terms)
+        expression = f"terms : ({term_query})" if self.has_preprocessed_terms else term_query
         sql = """
             SELECT doc_id, page, sentence_id, text,
                    bm25(evidence_fts, 0.0, 0.0, 0.0, 1.0) AS score
@@ -64,7 +75,8 @@ class SQLiteEvidenceIndex:
     def candidates(self, terms: list[str]) -> set[str]:
         if not terms:
             return set()
-        expression = " OR ".join('"' + term.replace('"', '""') + '"' for term in terms)
+        term_query = " OR ".join('"' + term.replace('"', '""') + '"' for term in terms)
+        expression = f"terms : ({term_query})" if self.has_preprocessed_terms else term_query
         with self._connect() as db:
             rows = db.execute("SELECT doc_id FROM evidence_fts WHERE evidence_fts MATCH ?", (expression,))
             return {row[0] for row in rows}
@@ -80,3 +92,14 @@ class SQLiteEvidenceIndex:
             ).fetchall()
         found = {row[0]: {"id": row[0], "page": row[1], "sentence_id": row[2], "text": row[3]} for row in rows}
         return [found[doc_id] for doc_id in doc_ids if doc_id in found]
+
+    def all_documents(self) -> list[dict[str, Any]]:
+        """Read the indexed evidence in a stable order for dense retrieval."""
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT doc_id, page, sentence_id, text FROM evidence_fts ORDER BY doc_id"
+            ).fetchall()
+        return [
+            {"id": row[0], "page": row[1], "sentence_id": row[2], "text": row[3]}
+            for row in rows
+        ]

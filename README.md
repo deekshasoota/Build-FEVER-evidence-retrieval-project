@@ -27,7 +27,7 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-The application and lexical index do not require paid APIs or transformer downloads. Optional semantic retrieval may use `sentence-transformers` and FAISS after separately installing compatible packages and downloading a model.
+The lexical methods run locally. Sentence-embedding retrieval uses `sentence-transformers/all-MiniLM-L6-v2`; its model files download the first time the feature is used. Porter stemming is provided by NLTK and requires no separate language-data download.
 
 ## Architecture and data flow
 
@@ -50,9 +50,10 @@ flowchart LR
 ## Algorithms
 
 - **Boolean** performs set operations over postings; it is useful for exact term constraints but does not rank.
-- **TF-IDF with cosine similarity** weights terms by corpus rarity and ranks vector similarity. It currently builds vectors for the supplied records at query time, so it is best for samples/smaller collections.
+- **TF-IDF with cosine similarity** weights terms by corpus rarity and ranks vectors fitted over the complete loaded corpus.
 - **BM25** uses term frequency, inverse document frequency, and document-length normalization over postings. It avoids scanning every sentence for candidates.
-- **Semantic retrieval** is not implemented yet. It is a useful extension, but should be added as a separately evaluated optional retriever alongside the lexical baselines.
+- **Sentence embeddings** rank dense MiniLM sentence vectors by cosine similarity.
+- **Hybrid RRF** combines BM25, TF-IDF, and sentence-embedding ranks with reciprocal-rank fusion.
 - Retrieval is not verification: similarity alone cannot establish whether a sentence entails or contradicts a claim.
 
 ## Data preparation and commands
@@ -64,9 +65,17 @@ python -m scripts.prepare_data data/raw/train.jsonl
 python -m scripts.build_sqlite_index data/raw/wiki-pages
 python -m scripts.train_model --train data/raw/train.jsonl --index artifacts/indexes/fever_index.json
 python -m scripts.run_evaluation --dev data/raw/dev.jsonl --index artifacts/indexes/fever_index.json
-python -m scripts.run_retrieval_evaluation --claims data/raw/dev.jsonl --index artifacts/indexes/fever_index.json --top-k 5
+python -m scripts.run_retrieval_evaluation --claims data/raw/dev.jsonl --index artifacts/indexes/fever_index.json --top-k 10
 streamlit run app.py
 ```
+
+The required preprocessing variants can be selected at index-build time; the saved settings are reused for lexical query processing. Rebuild the matching index whenever these options change:
+
+```bash
+python -m scripts.build_sqlite_index data/raw/wiki-pages --output artifacts/indexes/fever_index.sqlite3 --remove-stopwords --stemming
+```
+
+Stop-word removal retains negation terms (`no`, `not`, `never`, `nor`). The retrieval evaluation command compares BM25, TF-IDF, sentence embeddings, and Hybrid RRF at @10, reports Precision@10, Recall@10, MAP@10, nDCG@10, MRR and evidence-set completeness, and breaks out scores for any domain labels in the claims file. The dashboard expects a `domain` field by default; use `--domain-field` to select the actual field in your data.
 
 For the full Wikipedia corpus, use `scripts.build_sqlite_index`: it streams one or more JSONL files into a disk-backed SQLite FTS5 index, so it does not keep the complete corpus in Python memory. The app automatically prefers `artifacts/indexes/fever_index.sqlite3` when it exists. Add `--limit 100000` for a small preview; omit the limit to process every sentence in the extracted corpus. Full indexing can take a long time and use substantial disk space. The older JSON builder remains available for small experiments and the training/evaluation scripts. After building, refresh the app. For a sample-only smoke index, `python -c 'from src.data.load_data import read_jsonl; from src.indexing.inverted_index import InvertedIndex; i=InvertedIndex(); [i.add(r) for r in read_jsonl("data/sample/evidence.jsonl")]; i.save("artifacts/indexes/fever_index.json")'`.
 
@@ -86,7 +95,7 @@ The preview is derived from the FEVER June 2017 Wikipedia snapshot. Preserve the
 
 The supervised baseline is an interpretable logistic regression over claim coverage, token Jaccard overlap, negation agreement, number agreement, evidence count, and scaled BM25 score. It trains only on labels in the provided training JSONL and saves a model plus metadata. Evaluation is a separate command for a labeled development JSONL split. This is a deliberately simple baseline, not a modern textual-entailment model. Training on the illustrative sample is not appropriate and no official data results have been computed here. Use train for fitting, development for model selection, and reserve test labels.
 
-Retrieval evaluation computes Precision@K, Recall@K, MRR, nDCG@K, mean latency, and evidence-set completeness against FEVER sentence IDs. Sentence relevance is measured against the union of acceptable evidence; completeness requires all evidence sentences from at least one acceptable group. Verification evaluation reports accuracy, macro/per-class precision/recall/F1, confusion matrix, and FEVER score. Index construction saves sentence count, vocabulary size, build time, and serialized size. No metrics are displayed in the UI as though they had been measured.
+Retrieval evaluation compares BM25, TF-IDF, sentence embeddings, and Hybrid RRF using Precision@10, Recall@10, MAP@10, nDCG@10, MRR, latency, and evidence-set completeness against FEVER sentence IDs. Sentence relevance is measured against the union of acceptable evidence; completeness requires all evidence sentences from at least one acceptable group. Per-domain scores are computed only for domain labels actually present. A full 21-domain report requires a labeled split with all 21 domain labels; the dashboard never fills missing rows with fabricated scores. Verification evaluation reports accuracy, macro/per-class precision/recall/F1, confusion matrix, and FEVER score. Index construction saves sentence count, build time, serialized size, and preprocessing settings.
 
 ## Testing
 
@@ -106,4 +115,4 @@ Thorne, J., Vlachos, A., Christodoulopoulos, C., & Mittal, A. (2018). *FEVER: a 
 
 ## Current implementation status
 
-Implemented: data readers/validation summary, streaming wiki sentence preparation, preprocessing, inverted index persistence and build metadata, Boolean/TF-IDF/BM25 retrieval, a trainable supervised baseline, development classification and FEVER-score evaluation, BM25 evidence retrieval evaluation, conservative abstention when no model exists, an evidence-focused Streamlit interface, dataset and evaluation views, and academic documentation. Not implemented: a separate modern NLI model, semantic retrieval, probability calibration, rich error analysis, or full-corpus performance results. The reported FEVER-style score uses the standard label-plus-evidence criterion; compare with the official scorer before formal publication.
+Implemented: data readers, streaming wiki indexing, configurable text preprocessing, Boolean/TF-IDF/BM25 retrieval, sentence-embedding retrieval, Hybrid RRF, an optional interpretable verifier, classification evaluation, a four-method retrieval benchmark and dashboard, and project documentation. Full benchmark scores still require the official labeled development split and matching full evidence index. The reported FEVER-style score uses the standard label-plus-evidence criterion; compare with the official scorer before formal publication.

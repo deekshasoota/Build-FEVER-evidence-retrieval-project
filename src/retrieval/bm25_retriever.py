@@ -7,7 +7,7 @@ def search(query: str, index: InvertedIndex, top_k: int = 5, k1: float = 1.5, b:
     if top_k < 1: return []
     if hasattr(index, "search_bm25"):
         return index.search_bm25(query, top_k)
-    terms = tokenize(query); n = len(index.documents)
+    terms = index.tokenize(query) if hasattr(index, "tokenize") else tokenize(query); n = len(index.documents)
     if not terms or not n: return []
     avgdl = sum(index.lengths.values()) / n if n else 0
     scores: dict[str, float] = {}

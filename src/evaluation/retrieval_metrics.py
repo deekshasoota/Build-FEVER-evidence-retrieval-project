@@ -15,5 +15,25 @@ def ndcg_at_k(retrieved: list[str], relevant: set[str], k: int) -> float:
     ideal = sum(1 / math.log2(i + 2) for i in range(min(len(relevant), k)))
     return dcg / ideal if ideal else 0.0
 
+def average_precision_at_k(retrieved: list[str], relevant: set[str], k: int) -> float:
+    """Average precision through rank k, normalized by relevant items available at k."""
+    if k <= 0 or not relevant:
+        return 0.0
+    hits = 0
+    precision_sum = 0.0
+    for rank, item in enumerate(retrieved[:k], start=1):
+        if item in relevant:
+            hits += 1
+            precision_sum += hits / rank
+    return precision_sum / min(len(relevant), k)
+
+def precision_recall_at_each_k(retrieved: list[str], relevant: set[str], max_k: int) -> list[dict[str, float | int]]:
+    """Return query-level precision and recall for each cutoff from 1 to max_k."""
+    return [
+        {"k": k, "precision": precision_at_k(retrieved, relevant, k),
+         "recall": recall_at_k(retrieved, relevant, k)}
+        for k in range(1, max_k + 1)
+    ]
+
 def evidence_set_complete(retrieved: set[str], acceptable_sets: list[set[str]]) -> bool:
     return any(gold <= retrieved for gold in acceptable_sets if gold)
