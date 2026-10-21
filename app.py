@@ -17,20 +17,35 @@ from src.retrieval import bm25_retriever, boolean_retriever, tfidf_retriever
 st.set_page_config(page_title="FEVER Retrieval Study", page_icon="📄", layout="wide")
 st.markdown("""
 <style>
+  :root {--ir-plum:#5b4b8a; --ir-coral:#d7654b; --ir-teal:#258b82; --ir-gold:#d9a62e;}
   .block-container {padding-top:1.6rem; padding-bottom:3.5rem; max-width:1080px;}
   [data-testid="stSidebar"] {border-right:1px solid rgba(128,128,128,.18);}
-  [data-testid="stSidebar"] [data-testid="stMetric"] {padding:.7rem; border:1px solid rgba(128,128,128,.2); border-left:3px solid #56738a; border-radius:6px;}
-  .hero {padding:1.25rem 1.4rem; border:1px solid rgba(128,128,128,.24); border-left:4px solid #56738a; border-radius:6px; margin:.25rem 0 1.1rem;}
-  .hero .eyebrow {font-size:.78rem; letter-spacing:.06em; text-transform:uppercase; opacity:.72; font-weight:650; margin:0 0 .45rem;}
+  [data-testid="stSidebar"] [data-testid="stMetric"] {padding:.7rem; border:1px solid rgba(128,128,128,.2); border-left:3px solid var(--ir-teal); border-radius:7px; background:rgba(37,139,130,.07);}
+  .hero {position:relative; padding:1.35rem 1.5rem 1.4rem; border:1px solid rgba(128,128,128,.24); border-radius:9px; margin:.25rem 0 1.1rem; background:rgba(217,166,46,.07);}
+  .hero:before {content:""; position:absolute; top:0; left:0; right:0; height:4px; border-radius:9px 9px 0 0; background:linear-gradient(90deg,var(--ir-plum) 0 48%,var(--ir-coral) 48% 74%,var(--ir-teal) 74%);}
+  .hero .eyebrow {font-size:.78rem; letter-spacing:.07em; text-transform:uppercase; color:var(--ir-plum); font-weight:750; margin:.1rem 0 .55rem;}
   .hero h1 {font-size:1.9rem; line-height:1.2; margin:0 0 .45rem; letter-spacing:-.02em;}
-  .hero p {max-width:760px; margin:0; font-size:1rem; line-height:1.55; opacity:.86;}
-  .section-kicker {font-size:.8rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase; opacity:.75; margin:.5rem 0 .25rem;}
-  .st-key-search_panel {padding:1rem 1.1rem .25rem; border:1px solid rgba(128,128,128,.2); border-radius:6px; margin:.5rem 0 1.1rem;}
-  div[data-testid="stFormSubmitButton"] button {min-height:2.65rem; font-weight:650; border-radius:6px;}
-  div[data-testid="stButton"] button {border-radius:6px;}
-  [class*="st-key-evidence_"] {border-color:rgba(128,128,128,.24)!important; border-radius:6px;}
-  [data-testid="stAlert"] {border-radius:6px;}
-  @media (max-width: 700px) {.block-container {padding-top:1rem;} .hero {padding:1rem;} .hero h1 {font-size:1.55rem;}}
+  .hero p {max-width:760px; margin:0; font-size:1rem; line-height:1.55; opacity:.88;}
+  .section-kicker {font-size:.8rem; font-weight:750; letter-spacing:.05em; text-transform:uppercase; color:var(--ir-teal); margin:.5rem 0 .25rem;}
+  .st-key-search_panel {padding:1rem 1.1rem .25rem; border:1px solid rgba(128,128,128,.22); border-left:4px solid var(--ir-gold); border-radius:8px; margin:.5rem 0 1.1rem; background:rgba(217,166,46,.045);}
+  .st-key-example_0 button {border-color:rgba(91,75,138,.52); background:rgba(91,75,138,.09);}
+  .st-key-example_1 button {border-color:rgba(37,139,130,.52); background:rgba(37,139,130,.09);}
+  .st-key-example_2 button {border-color:rgba(215,101,75,.52); background:rgba(215,101,75,.09);}
+  div[data-testid="stFormSubmitButton"] button {min-height:2.65rem; font-weight:700; border-radius:7px; background:var(--ir-plum); border-color:var(--ir-plum);}
+  div[data-testid="stFormSubmitButton"] button:hover {background:#493b72; border-color:#493b72;}
+  div[data-testid="stButton"] button {border-radius:7px; transition:filter .15s ease;}
+  div[data-testid="stButton"] button:hover {filter:brightness(1.08);}
+  [class*="st-key-evidence_"] {border-color:rgba(128,128,128,.24)!important; border-radius:7px;}
+  [class*="st-key-compare_bm25_"] {border-left:4px solid var(--ir-coral)!important;}
+  [class*="st-key-compare_tfidf_"] {border-left:4px solid var(--ir-teal)!important;}
+  [class*="st-key-compare_boolean_"] {border-left:4px solid var(--ir-plum)!important;}
+  .stTabs [data-baseweb="tab-list"] {gap:.35rem;}
+  .stTabs [data-baseweb="tab"] {border-radius:7px 7px 0 0; padding:.55rem .8rem;}
+  .stTabs [data-baseweb="tab-list"] button:nth-child(1)[aria-selected="true"] {border-bottom:3px solid var(--ir-coral);}
+  .stTabs [data-baseweb="tab-list"] button:nth-child(2)[aria-selected="true"] {border-bottom:3px solid var(--ir-teal);}
+  .stTabs [data-baseweb="tab-list"] button:nth-child(3)[aria-selected="true"] {border-bottom:3px solid var(--ir-plum);}
+  [data-testid="stAlert"] {border-radius:7px;}
+  @media (max-width: 700px) {.block-container {padding-top:1rem;} .hero {padding:1.1rem 1rem;} .hero h1 {font-size:1.55rem;}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -210,14 +225,15 @@ if submitted:
             candidate_rows = bm25_retriever.search(claim.strip(), index, max(100, top_k * 20))
             tfidf_rows = tfidf_retriever.search(claim.strip(), candidate_rows, top_k)
             boolean_ids = boolean_retriever.search(claim.strip(), index)[:top_k]
-        left, right = st.columns(2)
-        with left:
-            st.subheader("BM25")
+        bm25_tab, tfidf_tab, boolean_tab = st.tabs(["BM25 · lexical", "TF-IDF · reranked", "Boolean · term match"])
+        with bm25_tab:
+            st.caption("Probabilistic term ranking with document-length normalization.")
             show_evidence(bm25_rows, key_prefix="compare_bm25")
-        with right:
-            st.subheader("TF-IDF over BM25 candidates")
+        with tfidf_tab:
+            st.caption("Cosine similarity reranks the BM25 candidate set.")
             show_evidence(tfidf_rows, key_prefix="compare_tfidf")
-        with st.expander("Boolean matches"):
+        with boolean_tab:
+            st.caption("Exact token matches; results are not relevance-ranked.")
             show_evidence([{**row, "rank": rank, "score": None}
                            for rank, row in enumerate(index.get_documents(boolean_ids), 1)],
                           key_prefix="compare_boolean")
