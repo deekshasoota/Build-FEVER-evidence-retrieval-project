@@ -9,6 +9,32 @@ results = Path("artifacts/results")
 classification_path = results / "dev_metrics.json"
 retrieval_path = results / "retrieval_metrics.json"
 comparison_path = results / "retriever_comparison.json"
+
+st.markdown("Upload saved evaluation reports to display their results here.")
+upload_col1, upload_col2, upload_col3 = st.columns(3)
+comparison_upload = upload_col1.file_uploader("Retrieval comparison", type="json", key="comparison_report_upload")
+classification_upload = upload_col2.file_uploader("Fact verification", type="json", key="classification_report_upload")
+retrieval_upload = upload_col3.file_uploader("Single retriever run", type="json", key="retrieval_report_upload")
+
+def load_report(path: Path, uploaded_file):
+    try:
+        if uploaded_file is not None:
+            report = json.loads(uploaded_file.getvalue())
+        elif path.exists():
+            report = json.loads(path.read_text(encoding="utf-8"))
+        else:
+            return None
+        if not isinstance(report, dict):
+            st.error(f"{uploaded_file.name if uploaded_file else path.name} must contain a JSON object report.")
+            return None
+        return report
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        st.error(f"Could not read {uploaded_file.name if uploaded_file else path.name}: {exc}")
+    return None
+
+comparison_report = load_report(comparison_path, comparison_upload)
+classification_report_data = load_report(classification_path, classification_upload)
+retrieval_report = load_report(retrieval_path, retrieval_upload)
 full_index_path = Path("artifacts/indexes/fever_index.meta.json")
 preview_index_path = Path("data/demo/fever_demo.meta.json")
 index_path = full_index_path if full_index_path.exists() else preview_index_path
@@ -24,9 +50,9 @@ if index_path.exists():
     if index.get("deployment_demo"):
         st.caption("This is a sampled deployment preview. Use the full local index for academic evaluation.")
 
-has_classification = classification_path.exists()
-has_retrieval = retrieval_path.exists()
-has_comparison = comparison_path.exists()
+has_classification = classification_report_data is not None
+has_retrieval = retrieval_report is not None
+has_comparison = comparison_report is not None
 if not has_comparison:
     st.subheader("Required retrieval comparison matrix")
     st.caption("Scores stay blank until the development claims with gold evidence annotations are evaluated.")
@@ -51,17 +77,10 @@ if not has_classification and not has_retrieval and not has_comparison:
         "Precision@10, Recall@10, MAP@10, nDCG@10, and precision–recall curves for the four required rankers "
         "once the labeled evaluation data is available. The preview corpus alone cannot produce valid scores."
     )
-    with st.expander("Generate the evaluation reports"):
-        st.markdown("After adding the labeled domain dataset and building the matching evidence index, run from the project folder:")
-        st.code(
-            "python -m scripts.run_retrieval_evaluation --claims data/raw/dev.jsonl "
-            "--index artifacts/indexes/fever_index.json --top-k 10 --domain-field domain",
-            language="bash",
-        )
-        st.caption("The report is written to `artifacts/results/retriever_comparison.json`. Keep the full dataset and index local; only publish scores actually computed from your labeled split.")
+    st.info("After a labeled benchmark run, upload its retrieval comparison report above. The matrix and precision–recall chart will populate from that report. No scores are calculated from the deployment preview.")
 
 if has_comparison:
-    report = json.loads(comparison_path.read_text(encoding="utf-8"))
+    report = comparison_report
     st.subheader("Ranking model comparison")
     index_size = report.get("evidence_index_documents")
     index_size_label = f"{index_size:,}" if isinstance(index_size, int) else "unknown"
@@ -138,7 +157,7 @@ if has_comparison:
     st.caption(report.get("note", ""))
 
 if has_classification:
-    report = json.loads(classification_path.read_text(encoding="utf-8"))
+    report = classification_report_data
     st.subheader("Fact verification")
     st.caption(f"Split: {report.get('split', 'unknown')} · Claims: {report.get('records', 'unknown')}")
     c1, c2, c3 = st.columns(3)
@@ -157,7 +176,7 @@ if has_classification:
         st.dataframe([{"Label": label, **metrics} for label, metrics in per_class.items()], hide_index=True, use_container_width=True)
 
 if has_retrieval:
-    report = json.loads(retrieval_path.read_text(encoding="utf-8"))
+    report = retrieval_report
     metrics = report.get("metrics", {})
     st.subheader("Evidence retrieval")
     st.caption(f"Retriever: {report.get('retriever', 'unknown')} · Claims with annotated evidence: {report.get('claims_with_evidence', 0)} · K={report.get('top_k', '?')}")
@@ -168,9 +187,3 @@ if has_retrieval:
     st.metric("Mean retrieval latency", f"{report.get('mean_latency_ms', 0):.2f} ms / claim")
     if report.get("note"):
         st.caption(report["note"])
-
-with st.expander("Raw run details"):
-    for path in (classification_path, retrieval_path, comparison_path, index_path):
-        if path.exists():
-            st.markdown(f"**{path.name}**")
-            st.json(json.loads(path.read_text(encoding="utf-8")))
