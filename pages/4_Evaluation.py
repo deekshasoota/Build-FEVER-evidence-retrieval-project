@@ -128,22 +128,27 @@ if not has_classification and not has_retrieval and not has_comparison:
         "MAP@10, nDCG@10, and precision–recall curves need the matching full evidence index."
     )
     st.info("After a labeled benchmark run, upload its retrieval comparison report above. The matrix and precision–recall chart will populate from that report. No scores are calculated from the deployment preview.")
+    dev_claims_path = Path("data/raw/dev.jsonl")
     sample_claims_path = Path("data/sample/claims.jsonl")
-    if sample_claims_path.exists():
-        sample_summary = summarize_claims(load_claims(sample_claims_path))
-        st.subheader("Available dataset preview")
-        st.caption("This chart summarizes the tiny bundled example only; it is not a retrieval performance comparison.")
+    claims_preview_path = dev_claims_path if dev_claims_path.exists() else sample_claims_path
+    if claims_preview_path.exists():
+        claims_summary = summarize_claims(load_claims(claims_preview_path))
+        st.subheader("FEVER development claims" if claims_preview_path == dev_claims_path else "Available dataset preview")
+        st.caption(
+            "Gold label distribution for the official labeled FEVER development split; this dataset summary is not a retrieval performance comparison."
+            if claims_preview_path == dev_claims_path else
+            "This chart summarizes the tiny bundled example only; it is not a retrieval performance comparison."
+        )
         preview_labels = pd.DataFrame([
             {"Gold label": label, "Claims": count}
-            for label, count in sorted(sample_summary["labels"].items())
+            for label, count in sorted(claims_summary["labels"].items())
         ])
         preview_cols = st.columns([1, 2])
-        preview_cols[0].metric("Example claims", f"{sample_summary['records']:,}")
-        preview_cols[0].metric("With evidence annotations", f"{sample_summary['with_evidence']:,}")
+        preview_cols[0].metric("Development claims" if claims_preview_path == dev_claims_path else "Example claims", f"{claims_summary['records']:,}")
         if not preview_labels.empty:
             preview_figure = px.bar(
                 preview_labels, x="Gold label", y="Claims", color="Gold label", text="Claims",
-                title="Example claims by gold label",
+                title="FEVER development claims by gold label" if claims_preview_path == dev_claims_path else "Example claims by gold label",
             )
             preview_figure.update_layout(showlegend=False, margin=dict(l=10, r=10, t=55, b=10))
             preview_cols[1].plotly_chart(preview_figure, use_container_width=True, key="preview_claim_labels")
