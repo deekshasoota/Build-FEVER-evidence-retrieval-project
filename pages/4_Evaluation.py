@@ -1,11 +1,16 @@
 import json
+import gzip
 from pathlib import Path
+import sqlite3
+import tempfile
 import plotly.express as px
 import pandas as pd
 import streamlit as st
 
 from src.data.load_data import load_claims
 from src.data.validate_data import summarize_claims
+from src.indexing.sqlite_index import SQLiteEvidenceIndex
+from src.retrieval import bm25_retriever, embedding_retriever, rrf_retriever, tfidf_retriever
 
 st.title("Evaluation dashboard")
 st.caption("Only computed run artifacts are shown. Sample fixtures are not FEVER benchmark results.")
@@ -13,6 +18,47 @@ results = Path("artifacts/results")
 classification_path = results / "dev_metrics.json"
 retrieval_path = results / "retrieval_metrics.json"
 comparison_path = results / "retriever_comparison.json"
+preview_archive = Path("data/demo/fever_demo.sqlite3.gz")
+preview_database = Path("data/demo/fever_demo.sqlite3")
+
+@st.cache_resource(show_spinner="Preparing the preview corpus for this comparison…")
+def load_comparison_resources(index_path: str, modified_ns: int, compressed: bool):
+    if compressed:
+        database_path = Path(tempfile.gettempdir()) / "fever_dashboard_preview.sqlite3"
+        if not database_path.exists() or database_path.stat().st_mtime_ns < modified_ns:
+            with gzip.open(index_path, "rb") as source, database_path.open("wb") as target:
+                target.write(source.read())
+    else:
+        database_path = Path(index_path)
+    index = SQLiteEvidenceIndex(database_path)
+    if index.document_count > 100_000:
+        raise RuntimeError("The interactive comparison needs an index of 100,000 sentences or fewer. Use the included preview corpus.")
+    if hasattr(index, "all_documents"):
+        records = index.all_documents()
+    else:
+        # Older local Streamlit sessions may still hold the pre-pagination class.
+        with sqlite3.connect(f"file:{database_path}?mode=ro", uri=True, timeout=30) as db:
+            rows = db.execute("SELECT doc_id, page, sentence_id, text FROM evidence_fts ORDER BY doc_id").fetchall()
+        records = [
+            {"id": row[0], "page": row[1], "sentence_id": row[2], "text": row[3]}
+            for row in rows
+        ]
+    preprocessing = getattr(index, "preprocessing", {})
+    vectorizer, tfidf_matrix = tfidf_retriever.build_index(records, preprocessing)
+    encoder, vectors, embedding_error = None, None, None
+    try:
+        encoder, vectors = embedding_retriever.encode_records(records)
+    except Exception as exc:
+        embedding_error = str(exc)
+    return index, records, vectorizer, tfidf_matrix, encoder, vectors, embedding_error
+
+def ranking_overlap(rankings: dict[str, list[dict]], top_k: int) -> pd.DataFrame:
+    names = list(rankings)
+    sets = {name: {str(row["id"]) for row in rows[:top_k]} for name, rows in rankings.items()}
+    return pd.DataFrame(
+        [[len(sets[a] & sets[b]) / len(sets[a] | sets[b]) if sets[a] | sets[b] else 0.0 for b in names] for a in names],
+        index=names, columns=names,
+    )
 
 st.markdown("Upload saved evaluation reports to display their results here.")
 upload_col1, upload_col2, upload_col3 = st.columns(3)
@@ -198,6 +244,74 @@ if has_comparison:
             if domain_rows:
                 st.dataframe(domain_rows, hide_index=True, use_container_width=True)
     st.caption(report.get("note", ""))
+
+st.subheader("Quick retrieval comparison")
+st.caption("Try a claim or topic to see how the methods rank evidence. The heatmap measures top-result overlap, not accuracy; use gold-labeled evaluation reports for performance scores.")
+comparison_index_path = (
+    preview_database if preview_database.exists()
+    else preview_archive if preview_archive.exists()
+    else Path("artifacts/indexes/fever_index.sqlite3")
+)
+if comparison_index_path.exists():
+    with st.form("quick_retrieval_comparison"):
+        query_col, k_col = st.columns([4, 1])
+        comparison_query = query_col.text_input("Claim or topic", "The Pacific Ocean is the largest ocean on Earth.", key="live_comparison_query")
+        comparison_k = k_col.number_input("Top results", min_value=3, max_value=10, value=5, step=1, key="live_comparison_top_k")
+        compare_submitted = st.form_submit_button("Compare methods", type="primary")
+    if compare_submitted:
+        if not comparison_query.strip():
+            st.warning("Enter a claim or topic first.")
+        else:
+            try:
+                with st.spinner("Ranking evidence with BM25, TF-IDF, sentence embeddings, and Hybrid RRF…"):
+                    idx, records, vectorizer, matrix, encoder, vectors, embedding_error = load_comparison_resources(
+                        str(comparison_index_path), comparison_index_path.stat().st_mtime_ns,
+                        comparison_index_path.suffix == ".gz",
+                    )
+                    bm25_rows = bm25_retriever.search(comparison_query, idx, int(comparison_k))
+                    tfidf_rows = tfidf_retriever.search_index(
+                        comparison_query, records, vectorizer, matrix, int(comparison_k),
+                        getattr(idx, "preprocessing", {}),
+                    )
+                    rankings = {
+                        "BM25": bm25_rows,
+                        "TF-IDF": tfidf_rows,
+                    }
+                    if encoder is not None:
+                        embedding_rows = embedding_retriever.search(
+                            comparison_query, records, int(comparison_k), model=encoder, vectors=vectors,
+                        )
+                        rankings["Sentence Embedding"] = embedding_rows
+                        rankings["Hybrid RRF"] = rrf_retriever.fuse(
+                            [bm25_rows, tfidf_rows, embedding_rows], int(comparison_k),
+                        )
+                overlap = ranking_overlap(rankings, int(comparison_k))
+                overlap.index.name = "Retriever"
+                overlap.columns.name = "Retriever"
+                overlap_figure = px.imshow(
+                    overlap, text_auto=".2f", zmin=0, zmax=1, color_continuous_scale="Tealgrn",
+                    labels={"x": "Retriever", "y": "Retriever", "color": "Jaccard overlap"},
+                    title=f"Top-{int(comparison_k)} result overlap",
+                )
+                overlap_figure.update_layout(margin=dict(l=10, r=10, t=55, b=10))
+                st.plotly_chart(overlap_figure, use_container_width=True, key="live_retriever_overlap")
+                if embedding_error:
+                    st.warning(f"BM25 and TF-IDF are shown. Sentence Embedding and Hybrid RRF need the sentence-transformers package: {embedding_error}")
+                result_tabs = st.tabs(list(rankings))
+                for tab, (method, rows) in zip(result_tabs, rankings.items()):
+                    with tab:
+                        if rows:
+                            st.dataframe([
+                                {"Rank": row.get("rank"), "Page": str(row.get("page", "")).replace("_", " "),
+                                 "Sentence": row.get("text", "")}
+                                for row in rows
+                            ], hide_index=True, use_container_width=True)
+                        else:
+                            st.info(f"{method} returned no results for this query.")
+            except Exception as exc:
+                st.error(f"The live comparison could not run: {exc}")
+else:
+    st.info("No small evidence preview index is available for the live comparison. Upload a labeled comparison report above to view its benchmark charts.")
 
 if has_classification:
     report = classification_report_data
