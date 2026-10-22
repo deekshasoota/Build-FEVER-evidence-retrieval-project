@@ -10,11 +10,11 @@ Given a natural-language claim, retrieve source sentences and determine whether 
 
 ## Scope and limitations
 
-The implemented lexical IR path is local and does not require a transformer model. No full Wikipedia dump, FEVER results, or trained model is bundled. A small FEVER-derived preview index can be included for deployment; it is not a replacement for the full corpus. A ranking score measures textual relevance only. `NOT ENOUGH INFO` means the system could not establish a verdict from its available evidence; it does not imply a claim is false.
+The project includes the official labeled FEVER development claims (`data/raw/dev.jsonl`, 19,998 records) so the Dataset Explorer has real claims by default. The full Wikipedia dump and benchmark result files are not bundled. A small FEVER-derived preview index is included for deployment; it is not a replacement for the full corpus. A ranking score measures textual relevance only. `NOT ENOUGH INFO` means the system could not establish a verdict from its available evidence; it does not imply a claim is false.
 
 ## Dataset and provenance
 
-Use the official FEVER claims and Wikipedia sentence corpus from the [FEVER project](https://fever.ai/dataset/fever.html) and [official GitHub repository](https://github.com/awslabs/fever). Read the dataset terms and citation information at the source. Place downloaded JSONL files under `data/raw/`; keep them out of Git. The full wiki page collection is large, so it is not downloaded automatically. `data/sample/` contains tiny illustrative records for smoke checks only; these are not FEVER data and must not be used to report academic results.
+Use the official FEVER claims and Wikipedia sentence corpus from the [FEVER project](https://fever.ai/dataset/fever.html) and [official GitHub repository](https://github.com/awslabs/fever). Read the applicable Wikipedia/FEVER reuse terms at the source. The labeled shared-task development split is included at `data/raw/dev.jsonl`; it has 19,998 claims, with 6,666 in each label. `data/sample/` contains tiny illustrative records for smoke checks only; these are not FEVER data and must not be used to report academic results. The full wiki page collection is large and is not included.
 
 ## Requirements and setup
 
@@ -58,7 +58,7 @@ flowchart LR
 
 ## Data preparation and commands
 
-Put official files in `data/raw/` yourself, observing FEVER terms. The expected claims format is one JSON object per line with `id`, `claim`, `label`, and `evidence`. The wiki format is one page object per line with `title` (or `id`) and `lines`, where each sentence is `sentence_id<TAB>sentence text`.
+The included development claims use one JSON object per line with `id`, `claim`, `label`, and `evidence`. Additional official split files can be placed in `data/raw/`, observing FEVER terms. The wiki format is one page object per line with `title` (or `id`) and `lines`, where each sentence is `sentence_id<TAB>sentence text`.
 
 ```bash
 python -m scripts.prepare_data data/raw/train.jsonl
@@ -95,7 +95,7 @@ The preview is derived from the FEVER June 2017 Wikipedia snapshot. Preserve the
 
 The supervised baseline is an interpretable logistic regression over claim coverage, token Jaccard overlap, negation agreement, number agreement, evidence count, and scaled BM25 score. It trains only on labels in the provided training JSONL and saves a model plus metadata. Evaluation is a separate command for a labeled development JSONL split. This is a deliberately simple baseline, not a modern textual-entailment model. Training on the illustrative sample is not appropriate and no official data results have been computed here. Use train for fitting, development for model selection, and reserve test labels.
 
-Retrieval evaluation compares BM25, TF-IDF, sentence embeddings, and Hybrid RRF using Precision@10, Recall@10, MAP@10, nDCG@10, MRR, latency, and evidence-set completeness against FEVER sentence IDs. Sentence relevance is measured against the union of acceptable evidence; completeness requires all evidence sentences from at least one acceptable group. Per-domain scores are computed only for domain labels actually present. A full 21-domain report requires a labeled split with all 21 domain labels; the dashboard never fills missing rows with fabricated scores. Verification evaluation reports accuracy, macro/per-class precision/recall/F1, confusion matrix, and FEVER score. Index construction saves sentence count, build time, serialized size, and preprocessing settings.
+Retrieval evaluation compares BM25, TF-IDF, sentence embeddings, and Hybrid RRF using Precision@10, Recall@10, MAP@10, nDCG@10, MRR, latency, and evidence-set completeness against FEVER sentence IDs. Sentence relevance is measured against the union of acceptable evidence; completeness requires all evidence sentences from at least one acceptable group. The live dashboard compares the four rankers' query result lists; sentence embeddings rerank a BM25 candidate pool for responsiveness. This overlap chart is exploratory, not an accuracy benchmark. The downloaded claims split alone cannot produce valid retrieval performance scores: use the matching full Wikipedia evidence index for the saved benchmark report. FEVER's shared-task development split does not contain the 21 domain labels required for the project's per-domain table. Verification evaluation reports accuracy, macro/per-class precision/recall/F1, confusion matrix, and FEVER score. Index construction saves sentence count, build time, serialized size, and preprocessing settings.
 
 ## Testing
 

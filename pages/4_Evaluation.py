@@ -10,7 +10,7 @@ import streamlit as st
 from src.data.load_data import load_claims
 from src.data.validate_data import summarize_claims
 from src.indexing.sqlite_index import SQLiteEvidenceIndex
-from src.retrieval import bm25_retriever, tfidf_retriever
+from src.retrieval import bm25_retriever, embedding_retriever, rrf_retriever, tfidf_retriever
 
 st.title("Evaluation dashboard")
 st.caption("Only computed run artifacts are shown. Sample fixtures are not FEVER benchmark results.")
@@ -54,6 +54,11 @@ def ranking_overlap(rankings: dict[str, list[dict]], top_k: int) -> pd.DataFrame
         [[len(sets[a] & sets[b]) / len(sets[a] | sets[b]) if sets[a] | sets[b] else 0.0 for b in names] for a in names],
         index=names, columns=names,
     )
+
+
+@st.cache_resource(show_spinner=False)
+def load_comparison_encoder():
+    return embedding_retriever.load_model()
 
 st.markdown("Upload saved evaluation reports to display their results here.")
 upload_col1, upload_col2, upload_col3 = st.columns(3)
@@ -118,9 +123,9 @@ if not has_classification:
     ], hide_index=True, use_container_width=True)
 if not has_classification and not has_retrieval and not has_comparison:
     st.info(
-        "No benchmark run has been saved to this deployment yet. The interactive comparison below will show "
-        "Precision@10, Recall@10, MAP@10, nDCG@10, and precision–recall curves for the four required rankers "
-        "once the labeled evaluation data is available. The preview corpus alone cannot produce valid scores."
+        "No gold-evidence benchmark report is saved to this deployment yet. The live comparison below shows "
+        "how the rankers order evidence for a query; it is not an accuracy score. Precision@10, Recall@10, "
+        "MAP@10, nDCG@10, and precision–recall curves need the matching full evidence index."
     )
     st.info("After a labeled benchmark run, upload its retrieval comparison report above. The matrix and precision–recall chart will populate from that report. No scores are calculated from the deployment preview.")
     sample_claims_path = Path("data/sample/claims.jsonl")
@@ -241,7 +246,7 @@ if has_comparison:
     st.caption(report.get("note", ""))
 
 st.subheader("Quick retrieval comparison")
-st.caption("Try a claim or topic to see how the methods rank evidence. The heatmap measures top-result overlap, not accuracy; use gold-labeled evaluation reports for performance scores.")
+st.caption("Compare BM25, TF-IDF, sentence embeddings, and Hybrid RRF for a query. The heatmap measures result overlap, not accuracy; valid performance scores need a full evidence index and gold evidence annotations.")
 comparison_index_path = (
     preview_database if preview_database.exists()
     else preview_archive if preview_archive.exists()
@@ -252,18 +257,20 @@ if comparison_index_path.exists():
         query_col, k_col = st.columns([4, 1])
         comparison_query = query_col.text_input("Claim or topic", "The Pacific Ocean is the largest ocean on Earth.", key="live_comparison_query")
         comparison_k = k_col.number_input("Top results", min_value=3, max_value=10, value=5, step=1, key="live_comparison_top_k")
-        compare_submitted = st.form_submit_button("Compare methods", type="primary")
+        compare_submitted = st.form_submit_button("Compare all four algorithms", type="primary")
     if compare_submitted:
         if not comparison_query.strip():
             st.warning("Enter a claim or topic first.")
         else:
             try:
-                with st.spinner("Ranking evidence with BM25 and TF-IDF…"):
+                with st.spinner("Ranking evidence with BM25, TF-IDF, sentence embeddings, and Hybrid RRF…"):
                     idx, records, vectorizer, matrix = load_comparison_resources(
                         str(comparison_index_path), comparison_index_path.stat().st_mtime_ns,
                         comparison_index_path.suffix == ".gz",
                     )
-                    bm25_rows = bm25_retriever.search(comparison_query, idx, int(comparison_k))
+                    candidate_count = min(500, max(100, int(comparison_k) * 50))
+                    bm25_candidates = bm25_retriever.search(comparison_query, idx, candidate_count)
+                    bm25_rows = bm25_candidates[:int(comparison_k)]
                     tfidf_rows = tfidf_retriever.search_index(
                         comparison_query, records, vectorizer, matrix, int(comparison_k),
                         getattr(idx, "preprocessing", {}),
@@ -272,6 +279,19 @@ if comparison_index_path.exists():
                         "BM25": bm25_rows,
                         "TF-IDF": tfidf_rows,
                     }
+                    embedding_error = None
+                    if bm25_candidates:
+                        try:
+                            encoder = load_comparison_encoder()
+                            embedding_rows = embedding_retriever.search(
+                                comparison_query, bm25_candidates, int(comparison_k), model=encoder,
+                            )
+                            rankings["Sentence Embedding"] = embedding_rows
+                            rankings["Hybrid RRF"] = rrf_retriever.fuse(
+                                [bm25_rows, tfidf_rows, embedding_rows], int(comparison_k),
+                            )
+                        except Exception as exc:
+                            embedding_error = str(exc)
                 overlap = ranking_overlap(rankings, int(comparison_k))
                 overlap.index.name = "Retriever"
                 overlap.columns.name = "Retriever"
@@ -282,6 +302,10 @@ if comparison_index_path.exists():
                 )
                 overlap_figure.update_layout(margin=dict(l=10, r=10, t=55, b=10))
                 st.plotly_chart(overlap_figure, use_container_width=True, key="live_retriever_overlap")
+                if "Sentence Embedding" in rankings:
+                    st.caption(f"Sentence embeddings rerank up to {len(bm25_candidates):,} BM25 candidates for a fast interactive comparison. Use the full labeled benchmark to compare corpus-wide accuracy.")
+                elif embedding_error:
+                    st.warning(f"BM25 and TF-IDF results are available. Sentence Embedding and Hybrid RRF could not load: {embedding_error}")
                 result_tabs = st.tabs(list(rankings))
                 for tab, (method, rows) in zip(result_tabs, rankings.items()):
                     with tab:
@@ -298,7 +322,7 @@ if comparison_index_path.exists():
 else:
     st.info("No small evidence preview index is available for the live comparison. Upload a labeled comparison report above to view its benchmark charts.")
 
-st.caption("The quick comparison uses BM25 and TF-IDF so results load without downloading or encoding an embedding model. Sentence Embedding and Hybrid RRF scores appear in the labeled benchmark report when you run the full evaluation.")
+st.caption("Interactive rank lists are for exploration. Precision@10, Recall@10, MAP@10, and nDCG@10 are only shown for runs evaluated against gold evidence using a full index.")
 
 if has_classification:
     report = classification_report_data

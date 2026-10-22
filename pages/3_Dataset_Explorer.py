@@ -10,7 +10,6 @@ import plotly.express as px
 import streamlit as st
 
 from src.data.load_data import load_claims
-from src.data.validate_data import summarize_claims
 
 
 @st.cache_data(show_spinner="Loading evidence corpus overview…")
@@ -32,8 +31,29 @@ def load_evidence_overview(index_path: str, compressed: bool):
     return sentence_count, page_count, page_rows
 
 
+def valid_evidence_groups(raw_evidence):
+    """Keep actual page/sentence annotations and ignore FEVER's NEI null placeholders."""
+    if not isinstance(raw_evidence, list):
+        return []
+    groups = raw_evidence if raw_evidence and isinstance(raw_evidence[0], list) else [raw_evidence]
+    valid = []
+    for group in groups:
+        if not isinstance(group, list):
+            continue
+        items = []
+        for item in group:
+            if isinstance(item, dict):
+                if item.get("page") is not None and item.get("sentence_id") is not None:
+                    items.append(item)
+            elif isinstance(item, (list, tuple)) and len(item) >= 4 and item[2] is not None and item[3] is not None:
+                items.append(item)
+        if items:
+            valid.append(items)
+    return valid
+
+
 st.title("Dataset Explorer")
-st.caption("Explore claim labels and evidence annotations. Gold annotations are supplied by the dataset; they are not model predictions.")
+st.caption("Explore FEVER claims, gold evidence annotations, and the indexed Wikipedia evidence corpus.")
 
 # Show the indexed evidence collection even when the user has not supplied a claims file.
 evidence_meta_path = Path("data/demo/fever_demo.meta.json")
@@ -115,24 +135,19 @@ if claims:
     if invalid_lines:
         st.warning(f"Skipped {invalid_lines:,} malformed or duplicate records while reading the uploaded file.")
 
-    summary = summarize_claims(claims)
-    labels = summary["labels"]
-    evidence_claims = summary["with_evidence"]
+    labels = {}
+    for row in claims:
+        label = row.get("label") or "UNLABELED"
+        labels[label] = labels.get(label, 0) + 1
+    evidence_claims = 0
     evidence_sentence_counts = []
     evidence_group_counts = []
     claim_table = []
     for row in claims:
-        evidence = row.get("evidence") or []
-        if isinstance(evidence, list) and evidence and isinstance(evidence[0], list):
-            groups = [group for group in evidence if isinstance(group, list)]
-            sentence_count = sum(len(group) for group in groups)
-            group_count = len(groups)
-        elif isinstance(evidence, list):
-            sentence_count = len(evidence)
-            group_count = int(bool(evidence))
-        else:
-            sentence_count = 0
-            group_count = 0
+        groups = valid_evidence_groups(row.get("evidence"))
+        sentence_count = sum(len(group) for group in groups)
+        group_count = len(groups)
+        evidence_claims += int(group_count > 0)
         evidence_sentence_counts.append(sentence_count)
         evidence_group_counts.append(group_count)
         claim_table.append({
@@ -144,9 +159,9 @@ if claims:
         })
 
     metric_cols = st.columns(4)
-    metric_cols[0].metric("Claims", f"{summary['records']:,}")
+    metric_cols[0].metric("Claims", f"{len(claims):,}")
     metric_cols[1].metric("With evidence", f"{evidence_claims:,}")
-    metric_cols[2].metric("Without evidence", f"{summary['records'] - evidence_claims:,}")
+    metric_cols[2].metric("Without evidence", f"{len(claims) - evidence_claims:,}")
     metric_cols[3].metric("Labels", f"{len(labels):,}")
 
     left, right = st.columns(2)
@@ -161,7 +176,7 @@ if claims:
         st.subheader("Evidence annotation coverage")
         evidence_frame = pd.DataFrame([
             {"Annotation status": "Has gold evidence", "Claims": evidence_claims},
-            {"Annotation status": "No gold evidence", "Claims": summary["records"] - evidence_claims},
+            {"Annotation status": "No gold evidence", "Claims": len(claims) - evidence_claims},
         ])
         figure = px.pie(evidence_frame, names="Annotation status", values="Claims", hole=.48,
                         color="Annotation status", title="Claims with evidence annotations")
@@ -185,12 +200,12 @@ if claims:
             detail = next(row for row in claims if str(row.get("id")) == selected_id)
             st.markdown(f"**Claim:** {detail.get('claim', '')}")
             st.markdown(f"**Gold label:** {detail.get('label') or 'UNLABELED'}")
-            evidence = detail.get("evidence") or []
+            evidence = valid_evidence_groups(detail.get("evidence"))
             if evidence:
                 st.markdown("**Gold evidence annotation:**")
                 st.write(evidence)
             else:
-                st.info("This record has no gold evidence annotation.")
+                st.info("This claim has no gold evidence sentence annotation. FEVER NEI records contain null placeholders, which are not evidence sentences.")
     else:
         st.info("No claims match the current filters.")
 else:
