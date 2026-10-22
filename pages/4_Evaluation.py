@@ -1,7 +1,11 @@
 import json
 from pathlib import Path
 import plotly.express as px
+import pandas as pd
 import streamlit as st
+
+from src.data.load_data import load_claims
+from src.data.validate_data import summarize_claims
 
 st.title("Evaluation dashboard")
 st.caption("Only computed run artifacts are shown. Sample fixtures are not FEVER benchmark results.")
@@ -78,6 +82,25 @@ if not has_classification and not has_retrieval and not has_comparison:
         "once the labeled evaluation data is available. The preview corpus alone cannot produce valid scores."
     )
     st.info("After a labeled benchmark run, upload its retrieval comparison report above. The matrix and precision–recall chart will populate from that report. No scores are calculated from the deployment preview.")
+    sample_claims_path = Path("data/sample/claims.jsonl")
+    if sample_claims_path.exists():
+        sample_summary = summarize_claims(load_claims(sample_claims_path))
+        st.subheader("Available dataset preview")
+        st.caption("This chart summarizes the tiny bundled example only; it is not a retrieval performance comparison.")
+        preview_labels = pd.DataFrame([
+            {"Gold label": label, "Claims": count}
+            for label, count in sorted(sample_summary["labels"].items())
+        ])
+        preview_cols = st.columns([1, 2])
+        preview_cols[0].metric("Example claims", f"{sample_summary['records']:,}")
+        preview_cols[0].metric("With evidence annotations", f"{sample_summary['with_evidence']:,}")
+        if not preview_labels.empty:
+            preview_figure = px.bar(
+                preview_labels, x="Gold label", y="Claims", color="Gold label", text="Claims",
+                title="Example claims by gold label",
+            )
+            preview_figure.update_layout(showlegend=False, margin=dict(l=10, r=10, t=55, b=10))
+            preview_cols[1].plotly_chart(preview_figure, use_container_width=True, key="preview_claim_labels")
 
 if has_comparison:
     report = comparison_report
@@ -108,6 +131,13 @@ if has_comparison:
     selected = report.get("overall", {}) if selected_domain == "Overall" else domains.get(selected_domain, {})
     metric_rows = []
     chart_rows = []
+    metric_chart_rows = []
+    metric_chart_labels = {
+        "precision_at_10": "Precision@10",
+        "recall_at_10": "Recall@10",
+        "map_at_10": "MAP@10",
+        "ndcg_at_10": "nDCG@10",
+    }
     for model_name, summary in selected.items():
         metrics = summary.get("metrics", {})
         metric_rows.append({
@@ -119,6 +149,10 @@ if has_comparison:
             "nDCG@10": metrics.get("ndcg_at_10"),
             "Mean latency (ms)": summary.get("mean_latency_ms"),
         })
+        for metric_key, metric_label in metric_chart_labels.items():
+            value = metrics.get(metric_key)
+            if isinstance(value, (int, float)):
+                metric_chart_rows.append({"Ranking method": model_name, "Metric": metric_label, "Score": value})
         for point in summary.get("curve", []):
             chart_rows.append({
                 "Ranking method": model_name,
@@ -128,6 +162,15 @@ if has_comparison:
             })
     if metric_rows:
         st.dataframe(metric_rows, hide_index=True, use_container_width=True)
+    if metric_chart_rows:
+        metric_figure = px.bar(
+            metric_chart_rows, x="Ranking method", y="Score", color="Metric", barmode="group",
+            title=f"Retrieval metric comparison · {selected_domain}",
+            category_orders={"Metric": list(metric_chart_labels.values())},
+        )
+        metric_figure.update_yaxes(range=[0, 1], title="Score (0–1)")
+        metric_figure.update_layout(legend_title_text="Metric", margin=dict(l=10, r=10, t=55, b=10))
+        st.plotly_chart(metric_figure, use_container_width=True, key="retrieval_metric_comparison")
     if chart_rows:
         figure = px.line(
             chart_rows, x="Recall", y="Precision", color="Ranking method",
