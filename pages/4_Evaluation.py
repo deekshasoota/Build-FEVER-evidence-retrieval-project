@@ -10,7 +10,7 @@ import streamlit as st
 from src.data.load_data import load_claims
 from src.data.validate_data import summarize_claims
 from src.indexing.sqlite_index import SQLiteEvidenceIndex
-from src.retrieval import bm25_retriever, embedding_retriever, rrf_retriever, tfidf_retriever
+from src.retrieval import bm25_retriever, tfidf_retriever
 
 st.title("Evaluation dashboard")
 st.caption("Only computed run artifacts are shown. Sample fixtures are not FEVER benchmark results.")
@@ -45,12 +45,7 @@ def load_comparison_resources(index_path: str, modified_ns: int, compressed: boo
         ]
     preprocessing = getattr(index, "preprocessing", {})
     vectorizer, tfidf_matrix = tfidf_retriever.build_index(records, preprocessing)
-    encoder, vectors, embedding_error = None, None, None
-    try:
-        encoder, vectors = embedding_retriever.encode_records(records)
-    except Exception as exc:
-        embedding_error = str(exc)
-    return index, records, vectorizer, tfidf_matrix, encoder, vectors, embedding_error
+    return index, records, vectorizer, tfidf_matrix
 
 def ranking_overlap(rankings: dict[str, list[dict]], top_k: int) -> pd.DataFrame:
     names = list(rankings)
@@ -263,8 +258,8 @@ if comparison_index_path.exists():
             st.warning("Enter a claim or topic first.")
         else:
             try:
-                with st.spinner("Ranking evidence with BM25, TF-IDF, sentence embeddings, and Hybrid RRF…"):
-                    idx, records, vectorizer, matrix, encoder, vectors, embedding_error = load_comparison_resources(
+                with st.spinner("Ranking evidence with BM25 and TF-IDF…"):
+                    idx, records, vectorizer, matrix = load_comparison_resources(
                         str(comparison_index_path), comparison_index_path.stat().st_mtime_ns,
                         comparison_index_path.suffix == ".gz",
                     )
@@ -277,14 +272,6 @@ if comparison_index_path.exists():
                         "BM25": bm25_rows,
                         "TF-IDF": tfidf_rows,
                     }
-                    if encoder is not None:
-                        embedding_rows = embedding_retriever.search(
-                            comparison_query, records, int(comparison_k), model=encoder, vectors=vectors,
-                        )
-                        rankings["Sentence Embedding"] = embedding_rows
-                        rankings["Hybrid RRF"] = rrf_retriever.fuse(
-                            [bm25_rows, tfidf_rows, embedding_rows], int(comparison_k),
-                        )
                 overlap = ranking_overlap(rankings, int(comparison_k))
                 overlap.index.name = "Retriever"
                 overlap.columns.name = "Retriever"
@@ -295,8 +282,6 @@ if comparison_index_path.exists():
                 )
                 overlap_figure.update_layout(margin=dict(l=10, r=10, t=55, b=10))
                 st.plotly_chart(overlap_figure, use_container_width=True, key="live_retriever_overlap")
-                if embedding_error:
-                    st.warning(f"BM25 and TF-IDF are shown. Sentence Embedding and Hybrid RRF need the sentence-transformers package: {embedding_error}")
                 result_tabs = st.tabs(list(rankings))
                 for tab, (method, rows) in zip(result_tabs, rankings.items()):
                     with tab:
@@ -312,6 +297,8 @@ if comparison_index_path.exists():
                 st.error(f"The live comparison could not run: {exc}")
 else:
     st.info("No small evidence preview index is available for the live comparison. Upload a labeled comparison report above to view its benchmark charts.")
+
+st.caption("The quick comparison uses BM25 and TF-IDF so results load without downloading or encoding an embedding model. Sentence Embedding and Hybrid RRF scores appear in the labeled benchmark report when you run the full evaluation.")
 
 if has_classification:
     report = classification_report_data

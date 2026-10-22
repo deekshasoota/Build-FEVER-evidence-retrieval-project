@@ -1,4 +1,8 @@
 import json
+import gzip
+import shutil
+import sqlite3
+import tempfile
 from pathlib import Path
 
 import pandas as pd
@@ -9,8 +13,60 @@ from src.data.load_data import load_claims
 from src.data.validate_data import summarize_claims
 
 
+@st.cache_data(show_spinner="Loading evidence corpus overview…")
+def load_evidence_overview(index_path: str, compressed: bool):
+    source = Path(index_path)
+    if compressed:
+        database = Path(tempfile.gettempdir()) / "fever_dataset_explorer.sqlite3"
+        if not database.exists() or database.stat().st_mtime_ns < source.stat().st_mtime_ns:
+            with gzip.open(source, "rb") as zipped, database.open("wb") as target:
+                shutil.copyfileobj(zipped, target)
+    else:
+        database = source
+    with sqlite3.connect(f"file:{database}?mode=ro", uri=True, timeout=30) as connection:
+        sentence_count = connection.execute("SELECT count(*) FROM evidence_fts").fetchone()[0]
+        page_rows = connection.execute(
+            "SELECT page, count(*) AS sentences FROM evidence_fts GROUP BY page ORDER BY sentences DESC LIMIT 15"
+        ).fetchall()
+        page_count = connection.execute("SELECT count(DISTINCT page) FROM evidence_fts").fetchone()[0]
+    return sentence_count, page_count, page_rows
+
+
 st.title("Dataset Explorer")
 st.caption("Explore claim labels and evidence annotations. Gold annotations are supplied by the dataset; they are not model predictions.")
+
+# Show the indexed evidence collection even when the user has not supplied a claims file.
+evidence_meta_path = Path("data/demo/fever_demo.meta.json")
+evidence_db_path = Path("data/demo/fever_demo.sqlite3")
+evidence_archive_path = Path("data/demo/fever_demo.sqlite3.gz")
+if evidence_meta_path.exists() and (evidence_db_path.exists() or evidence_archive_path.exists()):
+    try:
+        corpus_meta = json.loads(evidence_meta_path.read_text(encoding="utf-8"))
+        corpus_path = evidence_db_path if evidence_db_path.exists() else evidence_archive_path
+        actual_sentences, page_count, page_rows = load_evidence_overview(
+            str(corpus_path), corpus_path.suffix == ".gz"
+        )
+        st.subheader("Evidence corpus")
+        st.caption(f"Source: {corpus_meta.get('source', 'FEVER evidence index')} · Deployment preview")
+        corpus_cols = st.columns(4)
+        corpus_cols[0].metric("Indexed sentences", f"{actual_sentences:,}")
+        corpus_cols[1].metric("Wikipedia pages", f"{page_count:,}")
+        corpus_cols[2].metric("Full source size", f"{corpus_meta.get('source_sentence_count', actual_sentences):,} sentences")
+        corpus_cols[3].metric("Preview coverage", f"{actual_sentences / max(corpus_meta.get('source_sentence_count', actual_sentences), 1):.2%}")
+        st.caption("The hosted app uses a small reproducible preview sample. The full FEVER collection is available for local indexing; preview charts describe only the indexed sample.")
+        page_frame = pd.DataFrame(page_rows, columns=["Wikipedia page", "Sentences"])
+        if not page_frame.empty:
+            page_frame["Wikipedia page"] = page_frame["Wikipedia page"].astype(str).str.replace("_", " ", regex=False)
+            page_frame = page_frame.sort_values("Sentences", ascending=True)
+            page_figure = px.bar(
+                page_frame, x="Sentences", y="Wikipedia page", orientation="h",
+                color="Sentences", color_continuous_scale="Tealgrn",
+                title="Pages with the most indexed evidence sentences",
+            )
+            page_figure.update_layout(coloraxis_showscale=False, margin=dict(l=10, r=10, t=55, b=10), height=520)
+            st.plotly_chart(page_figure, use_container_width=True, key="dataset_evidence_pages")
+    except (OSError, sqlite3.Error, json.JSONDecodeError) as exc:
+        st.warning(f"Could not read the evidence preview index: {exc}")
 
 default_path = Path("data/raw/dev.jsonl")
 sample_path = Path("data/sample/claims.jsonl")
